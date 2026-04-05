@@ -37,6 +37,8 @@ jOutputMunch provides rules that suppress these patterns at the system
 prompt level. The model still has the same knowledge and reasoning. It just
 stops wasting tokens on structural noise.
 
+[H/T: https://www.youtube.com/@CraigdoesAI for doing a lot of legwork on this.]
+
 ---
 
 ## Quick Start
