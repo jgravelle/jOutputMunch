@@ -130,6 +130,38 @@ Published results: [benchmarks/results.md](benchmarks/results.md)
 
 ---
 
+## The jMunch Ecosystem: Both Sides of the Token Bill
+
+jOutputMunch cuts what the model **generates**. That's one half of your
+token cost.
+
+The other half is what you **send in** — file contents, search results,
+database dumps, documentation pages. That's where input tokens pile up,
+and where the [jMunch MCP suite](https://github.com/jgravelle/jcodemunch-mcp)
+attacks the problem from the other direction.
+
+Benchmarked on real production codebases (165–951 files):
+
+| Tool | What it replaces | Token reduction |
+|------|-----------------|-----------------|
+| [jCodemunch](https://github.com/jgravelle/jcodemunch-mcp) | Reading raw source files | **99.6% avg** (up to 531×) |
+| [jDocMunch](https://github.com/jgravelle/jdocmunch-mcp) | Loading full doc files | Search by section instead |
+| [jDataMunch](https://github.com/jgravelle/jdatamunch-mcp) | Scanning full datasets | ~25,000× on 1M-row CSVs |
+
+Instead of dumping a 700k-token codebase into context, jCodemunch lets the
+model navigate by symbol — looking up only the function, class, or reference
+it actually needs. Same answer. Fraction of the tokens.
+
+**Paired together:** jOutputMunch trims the output side by up to 76%.
+jCodemunch eliminates ~99.6% of the input side. On code-heavy workloads,
+that's the entire token budget on both ends of the conversation.
+
+They're complementary, not overlapping. jOutputMunch is a system prompt
+you paste. jCodemunch is an MCP server your agent calls. They work the
+same day, with the same model, with no changes to your workflow.
+
+---
+
 ## How It Works
 
 LLMs default to verbose, hedged, narrated output because that's what
@@ -177,24 +209,6 @@ add your own, adjust the banned word list. Fork and make it yours.
 inconsistently. jOutputMunch provides dozens of specific, testable rules
 targeting the exact patterns models default to. Specificity beats
 generality.
-
----
-
-## The jMunch Ecosystem
-
-jOutputMunch reduces **output** tokens -- what the model generates.
-
-For **input** token reduction (what you send to the model), the jMunch MCP
-suite achieves 99.6% reduction on real codebases:
-
-- [jCodemunch](https://github.com/jgravelle/jcodemunch-mcp) -- code
-  navigation without reading raw files
-- [jDocMunch](https://github.com/jgravelle/jdocmunch-mcp) -- documentation
-  search by section, not by file
-- [jDataMunch](https://github.com/jgravelle/jdatamunch-mcp) -- data
-  exploration without loading full datasets
-
-Together: fewer tokens in, fewer tokens out.
 
 ---
 
