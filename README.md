@@ -1,4 +1,4 @@
-# jOutputMunch
+# jOutputMunch - FREE!
 
 **Cut your LLM output tokens up to 76%. Average 65% across 5 benchmark scenarios. Same answers. Less cost. Paste one file.**
 
