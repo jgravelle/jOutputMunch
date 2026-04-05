@@ -198,6 +198,6 @@ Together: fewer tokens in, fewer tokens out.
 
 ## License
 
-MIT. Use it, fork it, share it.
+MIT. Forever. Use it, fork it, share it.
 
 Made by [J. Gravelle](https://github.com/jgravelle).
