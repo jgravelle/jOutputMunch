@@ -1,6 +1,6 @@
 # jOutputMunch
 
-**Cut your LLM output tokens 25-40%. Same answers. Less cost. Paste one file.**
+**Cut your LLM output tokens up to 76%. Average 65% across 5 benchmark scenarios. Same answers. Less cost. Paste one file.**
 
 jOutputMunch is a set of system prompt rules that eliminate wasted output
 tokens from any LLM. No code to install. No dependencies. No API. Copy a
