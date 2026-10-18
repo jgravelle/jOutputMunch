@@ -25,8 +25,8 @@ def _sha256(text: str) -> str:
 
 
 class RunRecorder:
-    def __init__(self, path: Path, *, run_id: str, provider: str, model: str, temperature: float,
-                 max_tokens: int, record_text: bool = False):
+    def __init__(self, path: Path, *, run_id: str, provider: str, model: str, temperature: float | None,
+                 max_tokens: int, record_text: bool = False, priced_in_dollars: bool = True):
         self.path = Path(path)
         self.base = {
             "schema": SCHEMA,
@@ -38,6 +38,7 @@ class RunRecorder:
             "max_tokens": max_tokens,
         }
         self.record_text = record_text
+        self.priced_in_dollars = priced_in_dollars
 
     def _write(self, row: dict) -> None:
         line = json.dumps({**self.base, **row}, ensure_ascii=False, separators=(",", ":"))
@@ -60,7 +61,9 @@ class RunRecorder:
             "input_tokens": c.input_tokens,
             "output_tokens": c.output_tokens,
             "latency_s": c.latency_s,
-            "cost_usd": call_cost(self.base["model"], c.input_tokens, c.output_tokens),
+            "cost_usd": (
+                call_cost(self.base["model"], c.input_tokens, c.output_tokens) if self.priced_in_dollars else None
+            ),
         }
         if self.record_text:
             row["text"] = c.text

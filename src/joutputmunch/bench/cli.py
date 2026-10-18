@@ -58,6 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
         "(default: benchmarks/runs/<run id>.jsonl, gitignored)",
     )
     p.add_argument("--record-text", action="store_true", help="also keep each answer's text in the records")
+    p.add_argument(
+        "--dry-check",
+        action="store_true",
+        help="claude-code only: make ONE baseline call and report its input tokens against the prompt estimate",
+    )
     return p
 
 
@@ -91,8 +96,12 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
         print(f"Cannot write {args.output}: no such folder. Pass --output.", file=sys.stderr)
         return 2
 
-    if not environ.get(KEY_ENV[args.provider]):
-        print(f"Set {KEY_ENV[args.provider]} to run against {args.provider}.", file=sys.stderr)
+    key = KEY_ENV[args.provider]
+    if key and not environ.get(key):
+        print(f"Set {key} to run against {args.provider}.", file=sys.stderr)
+        return 2
+    if args.dry_check and args.provider != "claude-code":
+        print("--dry-check is for --provider claude-code.", file=sys.stderr)
         return 2
 
     # A random suffix: two runs must never share a file or an id, whatever the clock's resolution.
@@ -109,16 +118,21 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
 
     provider = provider_factory(args.provider, args.model)
     config = RunConfig(temperature=args.temperature, max_tokens=args.max_tokens)
+    sets_temperature = getattr(provider, "sets_temperature", True)
     recorder = RunRecorder(
         records,
         run_id=run_id,
         provider=provider.name,
         model=provider.model,
-        temperature=config.temperature,
+        temperature=config.temperature if sets_temperature else None,
         max_tokens=config.max_tokens,
         record_text=args.record_text,
+        priced_in_dollars=getattr(provider, "priced_in_dollars", True),
     )
-    print(f"Running {len(scenarios)} scenario(s) on {provider.name}/{provider.model}, temperature {config.temperature}")
+    if args.dry_check:
+        return _dry_check(next(iter(scenarios.values())), provider, config, recorder, records)
+    temp = config.temperature if sets_temperature else "not set (provider default)"
+    print(f"Running {len(scenarios)} scenario(s) on {provider.name}/{provider.model}, temperature {temp}")
     print(f"Records: {records}\n")
     results = [run_scenario(s, provider, config, progress=print, recorder=recorder) for s in scenarios.values()]
 
@@ -127,15 +141,74 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
     for r in results:
         print(f"  {r.scenario.label:25s} {r.baseline.output_tokens:>5} -> {r.munch.output_tokens:>5} ({signed_change(r.reduction_pct)})")
     print(f"  aggregate {signed_change(summary.aggregate_pct)}, unweighted mean {signed_change(summary.mean_pct)}")
-    costs = [call_cost(provider.model, c.input_tokens, c.output_tokens) for r in results for c in (r.baseline, r.munch)]
-    if None in costs:
-        print(f"  cost: not priced ({provider.model} has no sourced price in pricing.py)")
+    if not getattr(provider, "priced_in_dollars", True):
+        calls = [c for r in results for c in (r.baseline, r.munch)]
+        print(
+            f"  usage: {sum(c.input_tokens for c in calls):,} input and {sum(c.output_tokens for c in calls):,} "
+            f"output tokens over {len(calls)} calls (subscription, not priced in dollars)"
+        )
+        dirty = _contaminated(results)
+        if dirty:
+            print("\nRefused: Claude Code added context to these calls, so the comparison is not fair:", file=sys.stderr)
+            for line in dirty:
+                print(f"  {line}", file=sys.stderr)
+            print(f"No report written. The records are in {records}.", file=sys.stderr)
+            return 3
     else:
-        print(f"  cost: ${sum(costs):.4f} for {len(costs)} calls")
+        costs = [call_cost(provider.model, c.input_tokens, c.output_tokens) for r in results for c in (r.baseline, r.munch)]
+        if None in costs:
+            print(f"  cost: not priced ({provider.model} has no sourced price in pricing.py)")
+        else:
+            print(f"  cost: ${sum(costs):.4f} for {len(costs)} calls")
 
     if args.save:
         args.output.write_text(render(results, config), encoding="utf-8")
         print(f"\nResults written to {args.output}")
+    return 0
+
+
+
+def _contaminated(results) -> list[str]:
+    from .providers.claude_code import contamination
+
+    out = []
+    for r in results:
+        for arm, system, c in (
+            ("baseline", r.scenario.system_baseline, r.baseline),
+            ("rules", r.scenario.system_munch, r.munch),
+        ):
+            extra = contamination(system, r.scenario.user, c.input_tokens)
+            if extra:
+                out.append(f"{r.scenario.key} {arm}: {c.input_tokens:,} input tokens, {extra:,} over the limit")
+    return out
+
+
+def _dry_check(scenario, provider, config, recorder, records) -> int:
+    """One baseline call: does Claude Code add context the prompt did not carry?"""
+    from .providers.claude_code import (
+        CONTAMINATION_MARGIN_TOKENS,
+        contamination,
+        estimate_tokens,
+    )
+
+    print(f"Dry check: one baseline call ({scenario.key}) on {provider.name}/{provider.model}")
+    try:
+        c = provider.complete(scenario.system_baseline, scenario.user, temperature=config.temperature,
+                              max_tokens=config.max_tokens)
+    except BaseException as exc:
+        recorder.failed(scenario, "baseline", scenario.system_baseline, exc)
+        raise
+    recorder.completed(scenario, "baseline", scenario.system_baseline, c)
+    estimate = estimate_tokens(scenario.system_baseline) + estimate_tokens(scenario.user)
+    extra = contamination(scenario.system_baseline, scenario.user, c.input_tokens)
+    print(f"  reported input: {c.input_tokens:,} tokens")
+    print(f"  prompt estimate: {estimate:,} tokens (limit: estimate + {CONTAMINATION_MARGIN_TOKENS})")
+    print(f"  overhead: {c.input_tokens - estimate:,} tokens")
+    print(f"  records: {records}")
+    if extra:
+        print(f"  REFUSE: {extra:,} tokens over the limit. A full run would be refused.")
+        return 3
+    print("  CLEAN: a full run would pass the guard.")
     return 0
 
 

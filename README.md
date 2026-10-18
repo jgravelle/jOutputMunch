@@ -149,6 +149,30 @@ model without a sourced price in `src/joutputmunch/bench/pricing.py` is
 reported as not priced. Outside a checkout, records go to `benchmarks/runs/`
 under the current folder; pass `--records` to choose.
 
+### Running on a Claude login instead of an API key
+
+`--provider claude-code` sends each call through headless Claude Code
+(`claude -p`) on the login Claude Code already has. It needs no API key and
+removes `ANTHROPIC_API_KEY` from the CLI's environment, so the run cannot fall
+back to one. It counts against your Claude plan's usage, not a bill in dollars.
+
+```bash
+python benchmarks/harness.py --provider claude-code --dry-check   # one call
+python benchmarks/harness.py --provider claude-code --save        # ten calls
+```
+
+Claude Code normally adds its own context, such as your `CLAUDE.md`, hooks,
+tools and MCP servers. In the baseline arm that would shorten the answers and
+hide part of the reduction. The provider turns those off with Claude Code's
+flags and runs each call in an empty folder. Every call's reported input is
+then checked against its prompt's estimated size. A run with any call over the
+limit writes no report, and `--dry-check` makes one baseline call first to show
+the overhead before you spend ten.
+
+Results from this path start a new series: they are not comparable with the
+published API run. Claude Code sets no temperature, and its usage block does
+not separate thinking tokens from output tokens. The report says both.
+
 The harness is the only part of jOutputMunch with code. The rules need none.
 
 Published results: [benchmarks/results.md](benchmarks/results.md)

@@ -8,9 +8,12 @@ DEFAULT_MODELS = {
     # The published results were measured on this model (benchmarks/results.md).
     "anthropic": "claude-sonnet-4-6",
     "openai": "gpt-4o",
+    # Runs on the user's own Claude login through `claude -p`, never an API key (jjg, 2026-10-18).
+    "claude-code": "claude-sonnet-4-6",
 }
 
-KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+# The environment variable each provider needs. None: the provider brings its own login.
+KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "claude-code": None}
 
 
 def make_provider(name: str, model: str | None = None) -> Provider:
@@ -25,6 +28,10 @@ def make_provider(name: str, model: str | None = None) -> Provider:
         from .openai import OpenAIProvider
 
         return OpenAIProvider(model)
+    if name == "claude-code":
+        from .claude_code import ClaudeCodeProvider
+
+        return ClaudeCodeProvider(model)
     raise ValueError(f"unknown provider: {name}")
 
 

@@ -59,17 +59,49 @@ def _signed_usd(delta: float) -> str:
     return f"{'+' if delta > 0 else '-'}${abs(delta):.4f}"
 
 
+CLAUDE_CODE = "claude-code"
+
+
+def _usage_section(results: list[ScenarioResult]) -> list[str]:
+    calls = [c for r in results for c in (r.baseline, r.munch)]
+    return [
+        "## Usage",
+        "",
+        (
+            f"Subscription usage, not priced in dollars: {sum(c.input_tokens for c in calls):,} input and "
+            f"{sum(c.output_tokens for c in calls):,} output tokens over {len(calls)} calls."
+        ),
+    ]
+
+
 def render(results: list[ScenarioResult], config: RunConfig) -> str:
     s = summarize(results)
     models = sorted({f"{r.provider}/{r.model}" for r in results})
+    via_claude_code = any(r.provider == CLAUDE_CODE for r in results)
     lines = [
         "# jOutputMunch Benchmark Results",
         "",
+    ]
+    if via_claude_code:
+        lines += [
+            (
+                "**A new series. Not comparable with the published API run (65.2%).** These calls ran "
+                "through Claude Code (`claude -p`) on a subscription login, a different path to the model "
+                "from the API calls that produced the published figures."
+            ),
+            "",
+        ]
+    lines += [
         "Same prompt, same model, same temperature. Only difference: jOutputMunch rules in the system prompt.",
         "",
         (
-            f"Model: **{', '.join(models)}**. Temperature: **{config.temperature}** (set explicitly). "
-            f"Max output tokens: {config.max_tokens}. One run per cell."
+            f"Model: **{', '.join(models)}**. "
+            + (
+                "Temperature: **not set** (Claude Code has no temperature flag; its default applies). "
+                if via_claude_code
+                else f"Temperature: **{config.temperature}** (set explicitly). "
+            )
+            + f"Max output tokens: {config.max_tokens}. One run per cell."
         ),
         "",
         "| Scenario | Baseline tokens | With rules | Reduction | Baseline latency | With rules latency |",
@@ -97,7 +129,22 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
     ]
     for r in results:
         lines.append(f"| {r.scenario.label} | {r.baseline.input_tokens:,} | {r.munch.input_tokens:,} |")
-    lines += ["", *_cost_section(results), "", "## Methodology"]
+    lines += ["", *(_usage_section(results) if via_claude_code else _cost_section(results)), "", "## Methodology"]
+    if via_claude_code:
+        lines += [
+            "",
+            (
+                "- Claude Code ran with its own context switched off as far as its flags allow: the system "
+                "prompt replaced, no tools, no MCP servers, no user, project or local settings files, no "
+                "per-machine prompt sections, no session saved, and each call in an empty folder. Managed "
+                "settings still apply. Every call's reported input was checked against its prompt's "
+                "estimated size; a run with any call over the limit writes no report."
+            ),
+            (
+                "- Thinking was requested off. The usage block does not split thinking tokens out of output "
+                "tokens, so that cannot be confirmed here."
+            ),
+        ]
     lines += [
         "",
         "- Token counts are the provider's native usage figures.",
