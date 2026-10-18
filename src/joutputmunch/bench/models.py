@@ -38,6 +38,13 @@ class ScenarioResult:
         return reduction_pct(self.baseline.output_tokens, self.munch.output_tokens)
 
 
+def signed_change(pct: float) -> str:
+    """A reduction as a signed change: 60.0 -> '-60.0%', -20.0 (growth) -> '+20.0%'."""
+    if pct == 0:
+        return "0.0%"
+    return f"{-pct:+.1f}%"
+
+
 def reduction_pct(baseline: int, munch: int) -> float:
     if baseline <= 0:
         return 0.0

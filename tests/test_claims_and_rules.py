@@ -43,16 +43,61 @@ def test_the_readme_quotes_the_aggregate_as_an_aggregate(repo):
     assert "4,520" in readme and "1,571" in readme
 
 
-@pytest.mark.parametrize("rel", ["README.md", "benchmarks/results.md", "rules/core.md"])
-@pytest.mark.parametrize(
-    "phrase",
-    [r"average\s+65", r"65(\.2)?%\s+average", r"zero information", r"no loss of information", r"25-40%", r"same answers"],
-)
-def test_no_unmeasured_claim_returns(repo, rel, phrase):
-    assert not re.search(phrase, _read(repo, rel), re.IGNORECASE), (rel, phrase)
+def _user_facing(repo):
+    """Every Markdown file a reader or a rule consumer sees, except the opt-in profile."""
+    files = [repo / "README.md", *sorted((repo / "benchmarks").glob("*.md"))]
+    files += sorted((repo / "rules").glob("*.md")) + sorted((repo / "guides").glob("*.md"))
+    return files
 
 
-def test_the_safe_rules_change_no_schema(repo):
+UNMEASURED = [
+    r"average\s+(of\s+)?\d",
+    r"\d+(\.\d+)?%\s+(on\s+)?average",
+    r"zero information",
+    r"no loss of information",
+    r"information (is |was )?(lost|preserved)",
+    r"retains all",
+    r"(keep|keeps|retain|retains) all (its|their|the) (information|knowledge)",
+    r"same answers?\b",
+    r"25-40%",
+]
+
+
+@pytest.mark.parametrize("phrase", UNMEASURED)
+def test_no_unmeasured_claim_returns(repo, phrase):
+    for f in _user_facing(repo):
+        assert not re.search(phrase, f.read_text(encoding="utf-8"), re.IGNORECASE), (f.name, phrase)
+
+
+def _blocks(text):
+    """Bullets and paragraphs: a rule and its condition sit in the same block."""
+    blocks, cur = [], []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("- "):
+            if cur:
+                blocks.append(" ".join(cur))
+            cur = [line.strip()] if line.strip() else []
+        else:
+            cur.append(line.strip())
+    if cur:
+        blocks.append(" ".join(cur))
+    return blocks
+
+
+SHAPE_CHANGE = re.compile(r"\b(omit|omitting|strip|stripping|drop|dropping|remove|no)\b.*\b(nulls?|empty|empties|counts?|wrappers?)\b", re.IGNORECASE)
+CONDITION = re.compile(r"schema|contract|only when|unless|you own|opt-in|aggressive\.md", re.IGNORECASE)
+
+
+def test_the_safe_set_never_changes_shape_without_a_condition(repo):
+    """A rule that drops nulls, empties, counts or wrappers must say when, in the same bullet."""
+    safe = sorted((repo / "rules").glob("*.md")) + sorted((repo / "guides").glob("*.md"))
+    for f in safe:
+        for block in _blocks(f.read_text(encoding="utf-8")):
+            if SHAPE_CHANGE.search(block):
+                assert CONDITION.search(block), (f.name, block)
+
+
+def test_the_old_unconditional_rules_are_not_in_the_safe_set(repo):
     core = _read(repo, "rules/core.md") + _read(repo, "rules/mcp.md")
     for unconditional in [
         "Omit keys whose value is null",

@@ -9,8 +9,8 @@ changes what they should do, a field their contract requires, a citation),
 keep it. A user's explicit request about format or style overrides these
 rules.
 
-These are the safe rules: none of them changes what a response means or the
-shape of a schema someone else defined. Rules that do change schema shape are
+These are the safe rules: they are written not to change what a response
+means or the shape of a schema someone else defined. Rules that do change schema shape are
 opt-in, in `rules/profiles/aggressive.md`.
 
 ---

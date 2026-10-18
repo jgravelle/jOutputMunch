@@ -2,8 +2,18 @@
 
 from __future__ import annotations
 
-from .models import ScenarioResult, summarize
+from .models import ScenarioResult, signed_change, summarize
 from .runner import RunConfig
+
+
+def _fenced(text: str) -> list[str]:
+    """Fence raw output with more backticks than it contains, so its own code blocks cannot close the fence."""
+    longest, run = 0, 0
+    for ch in text:
+        run = run + 1 if ch == "`" else 0
+        longest = max(longest, run)
+    fence = "`" * max(3, longest + 1)
+    return [fence, text, fence]
 
 
 def render(results: list[ScenarioResult], config: RunConfig) -> str:
@@ -25,10 +35,10 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
     for r in results:
         lines.append(
             f"| {r.scenario.label} | {r.baseline.output_tokens:,} | {r.munch.output_tokens:,} "
-            f"| **-{r.reduction_pct}%** | {r.baseline.latency_s}s | {r.munch.latency_s}s |"
+            f"| **{signed_change(r.reduction_pct)}** | {r.baseline.latency_s}s | {r.munch.latency_s}s |"
         )
     lines += [
-        f"| **Total** | **{s.baseline_tokens:,}** | **{s.munch_tokens:,}** | **-{s.aggregate_pct}%** | | |",
+        f"| **Total** | **{s.baseline_tokens:,}** | **{s.munch_tokens:,}** | **{signed_change(s.aggregate_pct)}** | | |",
         "",
         (
             f"Aggregate output-token reduction: {s.aggregate_pct}% (total over total). "
@@ -61,18 +71,6 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
         "",
     ]
     for r in results:
-        lines += [
-            f"### {r.scenario.label}",
-            "",
-            "**Baseline:**",
-            "```",
-            r.baseline.text,
-            "```",
-            "",
-            "**With jOutputMunch rules:**",
-            "```",
-            r.munch.text,
-            "```",
-            "",
-        ]
+        lines += [f"### {r.scenario.label}", "", "**Baseline:**", *_fenced(r.baseline.text), ""]
+        lines += ["**With jOutputMunch rules:**", *_fenced(r.munch.text), ""]
     return "\n".join(lines)

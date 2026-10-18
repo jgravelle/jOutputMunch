@@ -57,3 +57,19 @@ def test_the_report_names_its_settings_and_its_limits(fake_provider):
     assert "Unweighted mean of the 5 scenario reductions: 60.0%" in text
     assert "Answer quality is not measured" in text
     assert "| General question | 30 | 900 |" in text
+
+
+def test_growth_prints_as_growth():
+    from joutputmunch.bench.models import signed_change
+
+    assert signed_change(60.0) == "-60.0%"
+    assert signed_change(-20.0) == "+20.0%"
+    assert signed_change(0.0) == "0.0%"
+
+
+def test_raw_output_with_its_own_code_fence_stays_inside_the_report_fence():
+    from joutputmunch.bench.report import _fenced
+
+    text = "use this:\n```python\nx = 1\n```\nand ````four````"
+    fence, body, closing = _fenced(text)
+    assert fence == closing == "`" * 5 and body == text

@@ -1,7 +1,7 @@
 # jOutputMunch — MCP Tool Response Rules
 
 These rules apply specifically to Model Context Protocol tool responses.
-Use alongside core.md for maximum output token reduction.
+Use alongside core.md.
 
 ---
 
@@ -16,13 +16,15 @@ Use alongside core.md for maximum output token reduction.
   your result will parse JSON — it does not need a prose introduction
   explaining what the JSON contains.
 
-- When returning multiple items, use a flat array. Do not add per-item
+- When returning multiple items, use a flat array unless the tool's
+  output schema defines another shape. Do not add per-item
   commentary, per-item status messages, or interstitial text between
   items.
 
 - Omit metadata envelopes when they contain nothing actionable. A
   `_meta` object with only `powered_by` and `timing_ms` costs tokens
-  on every call. If the consumer never acts on it, stop sending it.
+  on every call. If the consumer never acts on it, stop sending it,
+  unless the tool's output schema or the protocol defines it.
 
 - Error responses are data, not conversation. Return
   `{"error":"not_found"}` — not `"I was unable to locate the

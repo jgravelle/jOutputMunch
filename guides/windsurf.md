@@ -26,5 +26,5 @@ If you prefer a shorter rule set, add this to `.windsurfrules`:
 - Short sentences. Split at three commas.
 - Do not narrate actions. Do not summarize after acting.
 - Do not re-quote tool output. Reference by line number.
-- JSON output: no indentation, no echo fields, no empty values.
+- JSON output: no indentation, no echo fields. Keep fields the schema requires.
 ```

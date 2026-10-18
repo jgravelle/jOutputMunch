@@ -10,14 +10,14 @@ import os
 import sys
 from pathlib import Path
 
-from .models import summarize
+from .models import signed_change, summarize
 from .providers import DEFAULT_MODELS, KEY_ENV, make_provider
 from .report import render
 from .runner import RunConfig, run_scenario
-from .scenarios import default_rules_dir, load_scenarios
+from .scenarios import RULE_SETS, default_rules_dir, load_scenarios
 
-# Anthropic's and OpenAI's documented default. The published run relied on the
-# default without setting it; the harness now sets it, so the value is on record.
+# Anthropic's and OpenAI's documented default. The harness committed with the
+# published results set no temperature, so it relied on this; it is explicit now.
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_TOKENS = 4096
 
@@ -45,9 +45,11 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
     args = build_parser().parse_args(argv)
     environ = os.environ if environ is None else environ
     rules_dir = args.rules_dir or default_rules_dir()
-    if not (rules_dir / "core.md").is_file():
+    needed = sorted({f for files in RULE_SETS.values() for f in files})
+    missing = [f for f in needed if not (rules_dir / f).is_file()]
+    if missing:
         print(
-            f"No rules at {rules_dir}. Run from a checkout (pip install -e .) or pass --rules-dir.",
+            f"No {', '.join(missing)} in {rules_dir}. Run from a checkout (pip install -e .) or pass --rules-dir.",
             file=sys.stderr,
         )
         return 2
@@ -64,6 +66,11 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
             return 2
         scenarios = {args.scenario: scenarios[args.scenario]}
 
+    # Every paid call happens below, so a report that cannot be written must stop us here.
+    if args.save and not args.output.parent.is_dir():
+        print(f"Cannot write {args.output}: no such folder. Pass --output.", file=sys.stderr)
+        return 2
+
     if not environ.get(KEY_ENV[args.provider]):
         print(f"Set {KEY_ENV[args.provider]} to run against {args.provider}.", file=sys.stderr)
         return 2
@@ -76,8 +83,8 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
     summary = summarize(results)
     print("\n--- Summary ---")
     for r in results:
-        print(f"  {r.scenario.label:25s} {r.baseline.output_tokens:>5} -> {r.munch.output_tokens:>5} (-{r.reduction_pct}%)")
-    print(f"  aggregate -{summary.aggregate_pct}%, unweighted mean -{summary.mean_pct}%")
+        print(f"  {r.scenario.label:25s} {r.baseline.output_tokens:>5} -> {r.munch.output_tokens:>5} ({signed_change(r.reduction_pct)})")
+    print(f"  aggregate {signed_change(summary.aggregate_pct)}, unweighted mean {signed_change(summary.mean_pct)}")
 
     if args.save:
         args.output.write_text(render(results, config), encoding="utf-8")

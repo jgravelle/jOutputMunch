@@ -8,8 +8,10 @@ command working:
     python benchmarks/harness.py --list
     python benchmarks/harness.py --save          # every run calls a paid API
 
-The defaults reproduce the published run (benchmarks/results.md): Anthropic
-`claude-sonnet-4-6`, temperature 1.0, max 4096 output tokens.
+The defaults are the model benchmarks/results.md names (`claude-sonnet-4-6`)
+and the settings of the harness committed with it: temperature 1.0, max 4096
+output tokens. `--save` overwrites benchmarks/results.md; pass --output to
+keep it.
 """
 
 import sys

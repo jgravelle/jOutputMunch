@@ -1,7 +1,7 @@
 # jOutputMunch — Code Assistant Rules
 
 These rules apply to coding agents (Claude Code, Cursor, Copilot, Windsurf,
-Cody). Use alongside core.md for maximum output token reduction.
+Cody). Use alongside core.md.
 
 ---
 
