@@ -160,19 +160,22 @@ On Windows it runs `claude.exe` directly, never the npm `claude.cmd` shim, which
 would cut the system prompt at its first newline.
 
 ```bash
-python benchmarks/harness.py --provider claude-code --dry-check   # two calls
-python benchmarks/harness.py --provider claude-code --save        # ten calls
+python benchmarks/harness.py --provider claude-code --dry-check   # three calls
+python benchmarks/harness.py --provider claude-code --save        # eleven calls
 ```
 
 Claude Code normally adds its own context, such as your `CLAUDE.md`, hooks,
 tools and MCP servers. In the baseline arm that would shorten the answers and
 hide part of the reduction. The provider turns those off with Claude Code's
-flags and runs each call in an empty folder. Every call's reported input is
-then checked against its prompt's estimated size, and the two arms' overheads
-against each other. A run that fails any check writes no report. The guard
-cannot tell whether the short user prompt arrived.
-`--dry-check` runs both arms of one scenario first, to show the overhead before
-you spend ten calls.
+flags and runs each call in an empty folder. Claude Code still adds some
+context of its own to every call, so each run starts with one near-empty probe
+call that measures it: the floor. A floor too large to be Claude Code alone
+refuses the run. Every call's reported input is then checked against its
+prompt's estimated size plus the floor, and the two arms against each other. A
+run that fails any check writes no report. The guard cannot tell whether the
+short user prompt arrived, and what the floor says is not measured.
+`--dry-check` runs the probe and both arms of one scenario first, before you
+spend eleven calls.
 
 Results from this path start a new series: they are not comparable with the
 published API run. Claude Code sets no temperature, and its usage block does

@@ -62,8 +62,8 @@ def _signed_usd(delta: float) -> str:
 CLAUDE_CODE = "claude-code"
 
 
-def _usage_section(results: list[ScenarioResult]) -> list[str]:
-    from .providers.claude_code import overhead
+def _usage_section(results: list[ScenarioResult], floor: int | None) -> list[str]:
+    from .providers.claude_code import excess
 
     calls = [c for r in results for c in (r.baseline, r.munch)]
     lines = [
@@ -71,24 +71,30 @@ def _usage_section(results: list[ScenarioResult]) -> list[str]:
         "",
         (
             f"Subscription usage, not priced in dollars: {sum(c.input_tokens for c in calls):,} input and "
-            f"{sum(c.output_tokens for c in calls):,} output tokens over {len(calls)} calls."
+            f"{sum(c.output_tokens for c in calls):,} output tokens over {len(calls)} calls, plus one floor probe."
         ),
         "",
-        "Input each call reported beyond its prompt's estimated size (four characters a token):",
+        (
+            f"Floor: Claude Code added **{floor:,}** tokens of its own context to a near-empty probe call. It "
+            "reaches both arms equally, and what it says was not measured. If it carries style instructions, "
+            "it shortens both arms and understates the reduction."
+        ),
         "",
-        "| Scenario | Baseline overhead | With rules overhead |",
+        "Input each call reported beyond its prompt's estimated size (four characters a token) and the floor:",
+        "",
+        "| Scenario | Baseline beyond the floor | With rules beyond the floor |",
         "|---|---|---|",
     ]
     for r in results:
         s = r.scenario
         lines.append(
-            f"| {s.label} | {overhead(s.system_baseline, s.user, r.baseline.input_tokens):,} "
-            f"| {overhead(s.system_munch, s.user, r.munch.input_tokens):,} |"
+            f"| {s.label} | {excess(s.system_baseline, s.user, r.baseline.input_tokens, floor):,} "
+            f"| {excess(s.system_munch, s.user, r.munch.input_tokens, floor):,} |"
         )
     return lines
 
 
-def render(results: list[ScenarioResult], config: RunConfig) -> str:
+def render(results: list[ScenarioResult], config: RunConfig, floor: int | None = None) -> str:
     s = summarize(results)
     models = sorted({f"{r.provider}/{r.model}" for r in results})
     via_claude_code = any(r.provider == CLAUDE_CODE for r in results)
@@ -147,7 +153,7 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
     ]
     for r in results:
         lines.append(f"| {r.scenario.label} | {r.baseline.input_tokens:,} | {r.munch.input_tokens:,} |")
-    lines += ["", *(_usage_section(results) if via_claude_code else _cost_section(results)), "", "## Methodology"]
+    lines += ["", *(_usage_section(results, floor) if via_claude_code else _cost_section(results)), "", "## Methodology"]
     if via_claude_code:
         from .providers import claude_code as cc
 
@@ -158,8 +164,9 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
                 "prompt replaced, no tools, no MCP servers, no user, project or local settings files "
                 "requested, no session saved to disk, and each call in an empty folder. Managed settings "
                 "still apply. Whether anything else reached the model is checked only by the guard, and "
-                "only above its limits: each call's reported input against its prompt's estimated size "
-                f"(over by {cc.CONTAMINATION_MARGIN_TOKENS}, or under by {cc.UNDER_LIMIT_TOKENS}), and the "
+                "only above its limits: the floor probe under "
+                f"{cc.FLOOR_CEILING_TOKENS:,}; each call's reported input against its prompt's estimated size "
+                f"plus the floor (over by {cc.EXCESS_LIMIT_TOKENS}, or under by {cc.UNDER_LIMIT_TOKENS}); and the "
                 f"two arms' overheads against each other ({cc.ARM_GAP_LOW_TOKENS:+} to "
                 f"{cc.ARM_GAP_HIGH_TOKENS:+}). Smaller additions pass unseen, and whether the user prompt "
                 "arrived by stdin is not checked. A run that fails any check writes no report."

@@ -15,8 +15,9 @@ after it lost. A shim is resolved to the `claude.exe` beside it or refused.
 Fairness. Claude Code normally adds its own context: the user's CLAUDE.md,
 hooks, MCP servers and tools. Any of that in the baseline arm would shorten the
 baseline and shrink the measured reduction. `--bare` would drop it but never
-reads OAuth, so the flags below turn each part off. `check_pair()` then
-measures what got through, from the usage block.
+reads OAuth, so the flags below turn each part off. A one-call probe measures
+what Claude Code still adds (the floor), and `check_pair()` measures what each
+call adds beyond it, from the usage block.
 
 What this path cannot do, and the report says so:
 - set the temperature (Claude Code has no flag for it);
@@ -40,18 +41,27 @@ from pathlib import Path
 from ..models import Completion
 from .base import timed
 
-# Over the prompt's own estimated size, the most input one call may report. The
-# user's global CLAUDE.md alone is about 1,500 tokens (6,059 bytes, measured
-# 2026-10-18), so a leak of it lands well past this.
-CONTAMINATION_MARGIN_TOKENS = 750
+# Claude Code adds its own context to every call, even with all of it switched off:
+# about 680 tokens in the first run (2026-10-18, overheads 681 to 857 by scenario),
+# the same in both arms. A one-call probe measures it as each run's FLOOR, and the
+# guard judges each call by what it adds beyond that floor.
+FLOOR_PROBE_SYSTEM = "You are an assistant."
+FLOOR_PROBE_USER = "Reply with the single word OK."
+# A leak (the user's global CLAUDE.md is about 1,500 tokens, 6,059 bytes) reaches the
+# probe as well, and subtracting the floor would then cancel it out of every call. So
+# the floor itself has a ceiling: a clean one measured about 680.
+FLOOR_CEILING_TOKENS = 1000
+# The most one call may add beyond the floor. The first run's worst was about 200, the
+# estimate under-counting a JSON prompt; a leaked CLAUDE.md is about 1,500.
+EXCESS_LIMIT_TOKENS = 400
 # How far the rules arm's overhead may sit from the baseline's. A context both arms
 # get equally shifts both; a difference is what biases the reduction. The range is
 # lopsided because the estimate overshoots the rules text by about 90 tokens
 # (tiktoken cl100k as a proxy), so a clean run sits near -90.
 ARM_GAP_LOW_TOKENS = -250
 ARM_GAP_HIGH_TOKENS = 150
-# A call that reports this much LESS input than its own prompt's estimate did not
-# receive its system prompt in full (a prompt cut short). A missing user prompt is too
+# A call that reports this much LESS input than its prompt's estimate plus the floor did
+# not receive its system prompt in full (a prompt cut short). A missing user prompt is too
 # small to see this way, and both arms would lose it equally, so the guard cannot check it.
 UNDER_LIMIT_TOKENS = 400
 
@@ -81,19 +91,37 @@ def overhead(system: str, user: str, input_tokens: int) -> int:
     return input_tokens - estimate_tokens(system) - estimate_tokens(user)
 
 
-def contamination(system: str, user: str, input_tokens: int) -> int:
+def excess(system: str, user: str, input_tokens: int, floor: int) -> int:
+    """What a call reported beyond its prompt's estimate and the run's floor."""
+    return overhead(system, user, input_tokens) - floor
+
+
+def contamination(system: str, user: str, input_tokens: int, floor: int) -> int:
     """Tokens over the one-call limit (0 = clean)."""
-    return max(0, overhead(system, user, input_tokens) - CONTAMINATION_MARGIN_TOKENS)
+    return max(0, excess(system, user, input_tokens, floor) - EXCESS_LIMIT_TOKENS)
 
 
-def check_pair(key: str, user: str, base_system: str, base_input: int, rules_system: str, rules_input: int) -> list[str]:
-    """What makes one scenario's two calls an unfair comparison. Empty means clean."""
+def floor_problems(floor: int) -> list[str]:
+    """A floor too high to be Claude Code's own context alone. Empty means clean."""
+    if floor > FLOOR_CEILING_TOKENS:
+        return [f"floor probe: {floor:,} tokens of context in a near-empty call (ceiling {FLOOR_CEILING_TOKENS:,})"]
+    return []
+
+
+def floor_of(input_tokens: int) -> int:
+    """The probe call's overhead: the run's floor."""
+    return overhead(FLOOR_PROBE_SYSTEM, FLOOR_PROBE_USER, input_tokens)
+
+
+def check_pair(key: str, user: str, base_system: str, base_input: int, rules_system: str, rules_input: int,
+               floor: int) -> list[str]:
+    """What makes one scenario's two calls an unfair comparison, given the run's floor. Empty means clean."""
     problems = []
     for arm, system, n in (("baseline", base_system, base_input), ("rules", rules_system, rules_input)):
-        extra = contamination(system, user, n)
+        extra = contamination(system, user, n, floor)
         if extra:
             problems.append(f"{key} {arm}: {n:,} input tokens, {extra:,} over the limit")
-        if overhead(system, user, n) < -UNDER_LIMIT_TOKENS:
+        if excess(system, user, n, floor) < -UNDER_LIMIT_TOKENS:
             problems.append(f"{key} {arm}: {n:,} input tokens, less than its own prompt; the prompt did not arrive in full")
     gap = overhead(rules_system, user, rules_input) - overhead(base_system, user, base_input)
     if not ARM_GAP_LOW_TOKENS <= gap <= ARM_GAP_HIGH_TOKENS:

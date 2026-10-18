@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dry-check",
         action="store_true",
-        help="claude-code only: run both arms of ONE scenario (2 calls) and check what Claude Code added",
+        help="claude-code only: the floor probe plus both arms of ONE scenario (3 calls); checks what Claude Code added",
     )
     return p
 
@@ -130,8 +130,13 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
         record_text=args.record_text,
         priced_in_dollars=getattr(provider, "priced_in_dollars", True),
     )
+    floor = None
+    if not getattr(provider, "priced_in_dollars", True):
+        floor = _probe_floor(provider, config, recorder)
+        if floor is None:
+            return 3
     if args.dry_check:
-        return _dry_check(next(iter(scenarios.values())), provider, config, recorder, records)
+        return _dry_check(next(iter(scenarios.values())), provider, config, recorder, records, floor)
     temp = config.temperature if sets_temperature else "not set (provider default)"
     print(f"Running {len(scenarios)} scenario(s) on {provider.name}/{provider.model}, temperature {temp}")
     print(f"Records: {records}\n")
@@ -148,7 +153,7 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
             f"  usage: {sum(c.input_tokens for c in calls):,} input and {sum(c.output_tokens for c in calls):,} "
             f"output tokens over {len(calls)} calls (subscription, not priced in dollars)"
         )
-        dirty = _contaminated(results)
+        dirty = _contaminated(results, floor)
         if dirty:
             print("\nRefused: Claude Code added context to these calls, so the comparison is not fair:", file=sys.stderr)
             for line in dirty:
@@ -163,33 +168,66 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
             print(f"  cost: ${sum(costs):.4f} for {len(costs)} calls")
 
     if args.save:
-        args.output.write_text(render(results, config), encoding="utf-8")
+        args.output.write_text(render(results, config, floor=floor), encoding="utf-8")
         print(f"\nResults written to {args.output}")
     return 0
 
 
-def _contaminated(results) -> list[str]:
+def _probe_floor(provider, config, recorder) -> int | None:
+    """One near-empty call: what Claude Code adds to every call. None when it is too much to trust."""
+    from .models import Scenario
+    from .providers.claude_code import (
+        FLOOR_PROBE_SYSTEM,
+        FLOOR_PROBE_USER,
+        floor_of,
+        floor_problems,
+    )
+
+    probe = Scenario(key="floor_probe", label="Floor probe", user=FLOOR_PROBE_USER,
+                     system_baseline=FLOOR_PROBE_SYSTEM, system_munch=FLOOR_PROBE_SYSTEM)
+    print("Floor probe: one near-empty call to measure what Claude Code adds to every call")
+    try:
+        c = provider.complete(FLOOR_PROBE_SYSTEM, FLOOR_PROBE_USER, temperature=config.temperature,
+                              max_tokens=config.max_tokens)
+    except BaseException as exc:
+        recorder.failed(probe, "probe", FLOOR_PROBE_SYSTEM, exc)
+        raise
+    recorder.completed(probe, "probe", FLOOR_PROBE_SYSTEM, c)
+    floor = floor_of(c.input_tokens)
+    print(f"  floor: {floor:,} tokens\n")
+    problems = floor_problems(floor)
+    if problems:
+        for p in problems:
+            print(f"Refused: {p}. Something besides Claude Code's own context reached the call.", file=sys.stderr)
+        return None
+    return floor
+
+
+def _contaminated(results, floor: int) -> list[str]:
     from .providers.claude_code import check_pair
 
     out = []
     for r in results:
         s = r.scenario
-        out += check_pair(s.key, s.user, s.system_baseline, r.baseline.input_tokens, s.system_munch, r.munch.input_tokens)
+        out += check_pair(s.key, s.user, s.system_baseline, r.baseline.input_tokens, s.system_munch,
+                          r.munch.input_tokens, floor)
     return out
 
 
-def _dry_check(scenario, provider, config, recorder, records) -> int:
-    """Both arms of one scenario: does Claude Code add context, and the same amount to each arm?"""
-    from .providers.claude_code import CONTAMINATION_MARGIN_TOKENS, check_pair, overhead
+def _dry_check(scenario, provider, config, recorder, records, floor: int) -> int:
+    """The floor probe plus both arms of one scenario: does Claude Code add more than its floor?"""
+    from .providers.claude_code import EXCESS_LIMIT_TOKENS, check_pair, excess
 
-    print(f"Dry check: both arms of one scenario ({scenario.key}), 2 calls, on {provider.name}/{provider.model}")
+    print(f"Dry check: both arms of one scenario ({scenario.key}), 2 calls after the probe, on "
+          f"{provider.name}/{provider.model}")
     r = run_scenario(scenario, provider, config, progress=print, recorder=recorder)
     for arm, system, c in (("baseline", scenario.system_baseline, r.baseline), ("rules", scenario.system_munch, r.munch)):
-        print(f"  {arm}: reported input {c.input_tokens:,} tokens, overhead {overhead(system, scenario.user, c.input_tokens):,}")
-    print(f"  limit: overhead under {CONTAMINATION_MARGIN_TOKENS} per call, and the arms within the gap limit")
+        print(f"  {arm}: reported input {c.input_tokens:,} tokens, {excess(system, scenario.user, c.input_tokens, floor):,} "
+              f"beyond the floor")
+    print(f"  limit: {EXCESS_LIMIT_TOKENS} beyond the floor per call, and the arms within the gap limit")
     print(f"  records: {records}")
     problems = check_pair(scenario.key, scenario.user, scenario.system_baseline, r.baseline.input_tokens,
-                          scenario.system_munch, r.munch.input_tokens)
+                          scenario.system_munch, r.munch.input_tokens, floor)
     if problems:
         for p in problems:
             print(f"  REFUSE: {p}")

@@ -13,14 +13,17 @@ from joutputmunch.bench.providers import KEY_ENV, make_provider
 from joutputmunch.bench.providers.claude_code import (
     ARM_GAP_HIGH_TOKENS,
     ARM_GAP_LOW_TOKENS,
-    CONTAMINATION_MARGIN_TOKENS,
+    EXCESS_LIMIT_TOKENS,
     FIXED_FLAGS,
+    FLOOR_CEILING_TOKENS,
+    FLOOR_PROBE_SYSTEM,
     UNDER_LIMIT_TOKENS,
     ClaudeCodeProvider,
     check_pair,
     child_env,
     contamination,
     estimate_tokens,
+    floor_problems,
     resolve_executable,
 )
 from joutputmunch.bench.records import read_records
@@ -28,11 +31,15 @@ from joutputmunch.bench.scenarios import load_scenarios
 
 
 class FakeClaude:
-    """Stands in for subprocess.run. Reports input = the prompt's estimate + that arm's overhead."""
+    """Stands in for subprocess.run. Reports input = the prompt's estimate + that call's overhead.
 
-    def __init__(self, base_overhead=0, rules_overhead=None, returncode=0, is_error=False):
+    The floor probe gets `probe_overhead` (the floor; default: the baseline's overhead), each arm its own.
+    """
+
+    def __init__(self, base_overhead=0, rules_overhead=None, probe_overhead=None, returncode=0, is_error=False):
         self.base_overhead = base_overhead
         self.rules_overhead = base_overhead if rules_overhead is None else rules_overhead
+        self.probe_overhead = base_overhead if probe_overhead is None else probe_overhead
         self.returncode = returncode
         self.is_error = is_error
         self.calls = []
@@ -42,7 +49,10 @@ class FakeClaude:
         self.calls.append({"argv": argv, "input": input, "cwd": cwd, "env": env, "cwd_empty": not os.listdir(cwd),
                            "kwargs": kwargs})
         rules = "jOutputMunch" in system
-        extra = self.rules_overhead if rules else self.base_overhead
+        if system == FLOOR_PROBE_SYSTEM:
+            extra = self.probe_overhead
+        else:
+            extra = self.rules_overhead if rules else self.base_overhead
         body = {
             "type": "result",
             "is_error": self.is_error,
@@ -212,79 +222,127 @@ def test_a_timeout_does_not_repeat_the_argv():
 
 
 def test_the_guard_sits_below_a_leaked_claude_md():
-    assert CONTAMINATION_MARGIN_TOKENS < 6059 // 4
-    at_limit = estimate_tokens("s") + estimate_tokens("u") + CONTAMINATION_MARGIN_TOKENS
-    assert contamination("s", "u", at_limit) == 0 and contamination("s", "u", at_limit + 1) == 1
+    assert EXCESS_LIMIT_TOKENS < 6059 // 4
+    floor = 680
+    at_limit = estimate_tokens("s") + estimate_tokens("u") + floor + EXCESS_LIMIT_TOKENS
+    assert contamination("s", "u", at_limit, floor) == 0 and contamination("s", "u", at_limit + 1, floor) == 1
+
+
+def test_a_floor_too_high_to_be_claude_codes_own_context_is_refused():
+    """Subtracting a floor that carries a leak would cancel the leak out of every call."""
+    assert floor_problems(681) == [] and floor_problems(FLOOR_CEILING_TOKENS) == []
+    assert floor_problems(FLOOR_CEILING_TOKENS + 1)[0].startswith("floor probe:")
+    assert 680 + 6059 // 4 > FLOOR_CEILING_TOKENS  # a clean floor plus a leaked CLAUDE.md is refused
 
 
 def test_check_pair_names_each_kind_of_problem():
     s, u = "s" * 40, "u" * 40
-    clean = estimate_tokens(s) + estimate_tokens(u)
-    assert check_pair("k", u, s, clean, s, clean) == []
-    assert check_pair("k", u, s, clean, s, clean + 1500)[0].startswith("k rules:")
+    floor = 700
+    clean = estimate_tokens(s) + estimate_tokens(u) + floor
+    assert check_pair("k", u, s, clean, s, clean, floor) == []
+    assert check_pair("k", u, s, clean, s, clean + 1500, floor)[0].startswith("k rules:")
     allowed = f"(allowed {ARM_GAP_LOW_TOKENS:+,} to {ARM_GAP_HIGH_TOKENS:+,})"
-    high = check_pair("k", u, s, clean, s, clean + ARM_GAP_HIGH_TOKENS + 1)
+    high = check_pair("k", u, s, clean, s, clean + ARM_GAP_HIGH_TOKENS + 1, floor)
     assert high == [f"k: the arms' overheads differ by +{ARM_GAP_HIGH_TOKENS + 1:,} tokens {allowed}"]
-    assert check_pair("k", u, s, clean, s, clean + ARM_GAP_HIGH_TOKENS) == []
+    assert check_pair("k", u, s, clean, s, clean + ARM_GAP_HIGH_TOKENS, floor) == []
     # The negative side is what a cut-short rules prompt looks like.
-    low = check_pair("k", u, s, clean, s, clean + ARM_GAP_LOW_TOKENS - 1)
+    low = check_pair("k", u, s, clean, s, clean + ARM_GAP_LOW_TOKENS - 1, floor)
     assert low == [f"k: the arms' overheads differ by {ARM_GAP_LOW_TOKENS - 1:+,} tokens {allowed}"]
-    assert check_pair("k", u, s, clean, s, clean + ARM_GAP_LOW_TOKENS) == []
-    # A prompt that never arrived reports less input than the prompt itself, in either arm.
-    lost = check_pair("k", u, s, clean - UNDER_LIMIT_TOKENS - 1, s, clean - UNDER_LIMIT_TOKENS - 1)
+    assert check_pair("k", u, s, clean, s, clean + ARM_GAP_LOW_TOKENS, floor) == []
+    # A prompt that never arrived reports less input than the prompt plus the floor, in either arm.
+    short = clean - UNDER_LIMIT_TOKENS - 1
+    lost = check_pair("k", u, s, short, s, short, floor)
     assert [p for p in lost if "did not arrive" in p] == [
-        f"k baseline: {clean - UNDER_LIMIT_TOKENS - 1:,} input tokens, less than its own prompt; the prompt did not arrive in full",
-        f"k rules: {clean - UNDER_LIMIT_TOKENS - 1:,} input tokens, less than its own prompt; the prompt did not arrive in full",
+        f"k baseline: {short:,} input tokens, less than its own prompt; the prompt did not arrive in full",
+        f"k rules: {short:,} input tokens, less than its own prompt; the prompt did not arrive in full",
     ]
+
+
+def test_the_floor_is_what_is_subtracted_not_a_fixed_allowance():
+    """The first real run was refused because a ~700 floor sat under a fixed 750 margin."""
+    s, u = "s" * 40, "u" * 40
+    for floor in (681, 857, 1000):
+        n = estimate_tokens(s) + estimate_tokens(u) + floor + 200
+        assert check_pair("k", u, s, n, s, n, floor) == []
 
 
 def test_a_clean_run_writes_a_report_that_says_it_is_a_new_series(tmp_path):
     out = tmp_path / "results.md"
     fake = FakeClaude(base_overhead=700)
-    assert _run(["--save", "--output", str(out)], fake, tmp_path) == 0 and len(fake.calls) == 10
+    assert _run(["--save", "--output", str(out)], fake, tmp_path) == 0 and len(fake.calls) == 11
     report = out.read_text(encoding="utf-8")
     assert report.split("\n", 3)[2].startswith("**A new series. Not comparable with the published API run.**")
     assert "Same prompt, same model. Only difference" in report and "same temperature" not in report
     assert "Temperature: **not set**" in report
-    limits = (f"(over by {CONTAMINATION_MARGIN_TOKENS}, or under by {UNDER_LIMIT_TOKENS})", f"({ARM_GAP_LOW_TOKENS:+} to {ARM_GAP_HIGH_TOKENS:+})")
+    limits = (f"(over by {EXCESS_LIMIT_TOKENS}, or under by {UNDER_LIMIT_TOKENS})", f"({ARM_GAP_LOW_TOKENS:+} to {ARM_GAP_HIGH_TOKENS:+})")
     assert all(x in " ".join(report.split()) for x in limits)
     assert "not checked" in report
     assert "Subscription usage, not priced in dollars" in report
-    assert "| General question | 700 | 700 |" in report
+    assert "Floor: Claude Code added **700** tokens" in report
+    assert "| General question | 0 | 0 |" in report
     assert "$" not in report.split("## Usage")[1].split("## Methodology")[0]
-    for r in read_records(tmp_path / "r.jsonl"):
+    rows = read_records(tmp_path / "r.jsonl")
+    assert rows[0]["scenario"] == "floor_probe" and rows[0]["arm"] == "probe" and len(rows) == 11
+    for r in rows:
         assert r["temperature"] is None and r["cost_usd"] is None
 
 
 @pytest.mark.parametrize(("fake", "names"), [
-    (FakeClaude(base_overhead=1500), "bug_diagnosis baseline"),
-    (FakeClaude(base_overhead=0, rules_overhead=1500), "bug_diagnosis rules"),
-    (FakeClaude(base_overhead=0, rules_overhead=400), "bug_diagnosis: the arms' overheads differ"),
+    # A leak in the scenario calls but not the probe (a hook keyed to the prompt, say).
+    (FakeClaude(base_overhead=2200, probe_overhead=700), "bug_diagnosis baseline"),
+    (FakeClaude(base_overhead=700, rules_overhead=2200), "bug_diagnosis rules"),
+    (FakeClaude(base_overhead=700, rules_overhead=1100), "bug_diagnosis: the arms' overheads differ"),
     # The shim defect: a rules prompt cut to its first line reports far less input than it should.
-    (FakeClaude(base_overhead=0, rules_overhead=-1400), "bug_diagnosis rules: "),
+    (FakeClaude(base_overhead=700, rules_overhead=-700), "bug_diagnosis rules: "),
 ])
 def test_a_contaminated_run_writes_no_report_and_keeps_its_records(tmp_path, capsys, fake, names):
     out = tmp_path / "results.md"
     assert _run(["--save", "--output", str(out)], fake, tmp_path) == 3 and not out.exists()
-    assert len(read_records(tmp_path / "r.jsonl")) == 10
+    assert len(read_records(tmp_path / "r.jsonl")) == 11
     err = capsys.readouterr().err
     assert "Refused" in err and names in err
 
 
 @pytest.mark.parametrize(("fake", "rc", "verdict"), [
-    (FakeClaude(base_overhead=100), 0, "CLEAN"),
-    (FakeClaude(base_overhead=1500), 3, "REFUSE"),
-    (FakeClaude(base_overhead=100, rules_overhead=1500), 3, "REFUSE"),
+    (FakeClaude(base_overhead=700), 0, "CLEAN"),
+    (FakeClaude(base_overhead=2200, probe_overhead=700), 3, "REFUSE"),
+    (FakeClaude(base_overhead=700, rules_overhead=2200), 3, "REFUSE"),
 ])
-def test_the_dry_check_runs_both_arms_of_one_scenario(tmp_path, capsys, fake, rc, verdict):
+def test_the_dry_check_runs_the_probe_and_both_arms_of_one_scenario(tmp_path, capsys, fake, rc, verdict):
     assert _run(["--dry-check"], fake, tmp_path) == rc
-    assert len(fake.calls) == 2
+    assert len(fake.calls) == 3
     systems = [c["argv"][c["argv"].index("--system-prompt") + 1] for c in fake.calls]
-    assert "jOutputMunch" not in systems[0] and "jOutputMunch" in systems[1]
+    assert systems[0] == FLOOR_PROBE_SYSTEM
+    assert "jOutputMunch" not in systems[1] and "jOutputMunch" in systems[2]
     assert verdict in capsys.readouterr().out
-    assert [r["arm"] for r in read_records(tmp_path / "r.jsonl")] == ["baseline", "rules"]
+    assert [r["arm"] for r in read_records(tmp_path / "r.jsonl")] == ["probe", "baseline", "rules"]
+
+
+def test_a_leaked_context_in_the_probe_refuses_before_any_scenario_call(tmp_path, capsys):
+    fake = FakeClaude(base_overhead=2200)  # the probe carries it too: a CLAUDE.md in every call
+    assert _run(["--save", "--output", str(tmp_path / "results.md")], fake, tmp_path) == 3
+    assert len(fake.calls) == 1 and not (tmp_path / "results.md").exists()
+    assert "floor probe" in capsys.readouterr().err
 
 
 def test_the_dry_check_is_only_for_claude_code(capsys):
     assert cli.main(["--dry-check"], environ={"ANTHROPIC_API_KEY": "k"}) == 2
     assert "claude-code" in capsys.readouterr().err
+
+
+def test_the_first_real_run_passes_the_calibrated_guard():
+    """Replays the input tokens the refused 2026-10-18 run reported (records 20261018T171926Z-6df85047).
+
+    The probe did not exist then, so the floor here is an assumption: the run's smallest overhead (681).
+    """
+    reported = {  # scenario: (baseline input, rules input)
+        "code_explanation": (820, 2336),
+        "bug_diagnosis": (855, 2366),
+        "pr_review": (929, 2439),
+        "data_summary": (1131, 2185),
+        "general_question": (719, 1777),
+    }
+    scenarios = load_scenarios()
+    for key, (base, rules) in reported.items():
+        s = scenarios[key]
+        assert check_pair(key, s.user, s.system_baseline, base, s.system_munch, rules, 681) == [], key
