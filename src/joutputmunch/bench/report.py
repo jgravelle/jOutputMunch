@@ -59,17 +59,67 @@ def _signed_usd(delta: float) -> str:
     return f"{'+' if delta > 0 else '-'}${abs(delta):.4f}"
 
 
+CLAUDE_CODE = "claude-code"
+
+
+def _usage_section(results: list[ScenarioResult]) -> list[str]:
+    from .providers.claude_code import overhead
+
+    calls = [c for r in results for c in (r.baseline, r.munch)]
+    lines = [
+        "## Usage",
+        "",
+        (
+            f"Subscription usage, not priced in dollars: {sum(c.input_tokens for c in calls):,} input and "
+            f"{sum(c.output_tokens for c in calls):,} output tokens over {len(calls)} calls."
+        ),
+        "",
+        "Input each call reported beyond its prompt's estimated size (four characters a token):",
+        "",
+        "| Scenario | Baseline overhead | With rules overhead |",
+        "|---|---|---|",
+    ]
+    for r in results:
+        s = r.scenario
+        lines.append(
+            f"| {s.label} | {overhead(s.system_baseline, s.user, r.baseline.input_tokens):,} "
+            f"| {overhead(s.system_munch, s.user, r.munch.input_tokens):,} |"
+        )
+    return lines
+
+
 def render(results: list[ScenarioResult], config: RunConfig) -> str:
     s = summarize(results)
     models = sorted({f"{r.provider}/{r.model}" for r in results})
+    via_claude_code = any(r.provider == CLAUDE_CODE for r in results)
     lines = [
         "# jOutputMunch Benchmark Results",
         "",
-        "Same prompt, same model, same temperature. Only difference: jOutputMunch rules in the system prompt.",
+    ]
+    if via_claude_code:
+        lines += [
+            (
+                "**A new series. Not comparable with the published API run.** These calls ran "
+                "through Claude Code (`claude -p`) on a subscription login, a different path to the model "
+                "from the API calls that produced the published figures."
+            ),
+            "",
+        ]
+    lines += [
+        (
+            "Same prompt, same model. Only difference: jOutputMunch rules in the system prompt."
+            if via_claude_code
+            else "Same prompt, same model, same temperature. Only difference: jOutputMunch rules in the system prompt."
+        ),
         "",
         (
-            f"Model: **{', '.join(models)}**. Temperature: **{config.temperature}** (set explicitly). "
-            f"Max output tokens: {config.max_tokens}. One run per cell."
+            f"Model: **{', '.join(models)}**. "
+            + (
+                "Temperature: **not set** (Claude Code has no temperature flag; its default applies). "
+                if via_claude_code
+                else f"Temperature: **{config.temperature}** (set explicitly). "
+            )
+            + f"Max output tokens: {config.max_tokens}. One run per cell."
         ),
         "",
         "| Scenario | Baseline tokens | With rules | Reduction | Baseline latency | With rules latency |",
@@ -97,7 +147,28 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
     ]
     for r in results:
         lines.append(f"| {r.scenario.label} | {r.baseline.input_tokens:,} | {r.munch.input_tokens:,} |")
-    lines += ["", *_cost_section(results), "", "## Methodology"]
+    lines += ["", *(_usage_section(results) if via_claude_code else _cost_section(results)), "", "## Methodology"]
+    if via_claude_code:
+        from .providers import claude_code as cc
+
+        lines += [
+            "",
+            (
+                "- Claude Code ran with its own context switched off as far as its flags allow: the system "
+                "prompt replaced, no tools, no MCP servers, no user, project or local settings files "
+                "requested, no session saved to disk, and each call in an empty folder. Managed settings "
+                "still apply. Whether anything else reached the model is checked only by the guard, and "
+                "only above its limits: each call's reported input against its prompt's estimated size "
+                f"(over by {cc.CONTAMINATION_MARGIN_TOKENS}, or under by {cc.UNDER_LIMIT_TOKENS}), and the "
+                f"two arms' overheads against each other ({cc.ARM_GAP_LOW_TOKENS:+} to "
+                f"{cc.ARM_GAP_HIGH_TOKENS:+}). Smaller additions pass unseen, and whether the user prompt "
+                "arrived by stdin is not checked. A run that fails any check writes no report."
+            ),
+            (
+                "- Thinking was requested off. The usage block does not split thinking tokens out of output "
+                "tokens, so that cannot be confirmed here."
+            ),
+        ]
     lines += [
         "",
         "- Token counts are the provider's native usage figures.",

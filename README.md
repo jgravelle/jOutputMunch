@@ -120,8 +120,9 @@ format you own.
 
 ## Benchmarks
 
-Run the benchmark harness yourself. It calls a paid API: two calls per
-scenario, ten for the full set.
+Run the benchmark harness yourself. It makes two calls per scenario, ten for the
+full set: paid API calls, or usage on your Claude plan with `--provider
+claude-code` (below).
 
 ```bash
 pip install -e ".[anthropic]"
@@ -148,6 +149,34 @@ with input and output tokens, because the rules add input to every call. A
 model without a sourced price in `src/joutputmunch/bench/pricing.py` is
 reported as not priced. Outside a checkout, records go to `benchmarks/runs/`
 under the current folder; pass `--records` to choose.
+
+### Running on a Claude login instead of an API key
+
+`--provider claude-code` sends each call through headless Claude Code
+(`claude -p`) on the login Claude Code already has. It needs no API key, and it
+removes the key and provider-switch variables it knows from the CLI's
+environment. It counts against your Claude plan's usage, not a bill in dollars.
+On Windows it runs `claude.exe` directly, never the npm `claude.cmd` shim, which
+would cut the system prompt at its first newline.
+
+```bash
+python benchmarks/harness.py --provider claude-code --dry-check   # two calls
+python benchmarks/harness.py --provider claude-code --save        # ten calls
+```
+
+Claude Code normally adds its own context, such as your `CLAUDE.md`, hooks,
+tools and MCP servers. In the baseline arm that would shorten the answers and
+hide part of the reduction. The provider turns those off with Claude Code's
+flags and runs each call in an empty folder. Every call's reported input is
+then checked against its prompt's estimated size, and the two arms' overheads
+against each other. A run that fails any check writes no report. The guard
+cannot tell whether the short user prompt arrived.
+`--dry-check` runs both arms of one scenario first, to show the overhead before
+you spend ten calls.
+
+Results from this path start a new series: they are not comparable with the
+published API run. Claude Code sets no temperature, and its usage block does
+not separate thinking tokens from output tokens. The report says both.
 
 The harness is the only part of jOutputMunch with code. The rules need none.
 
