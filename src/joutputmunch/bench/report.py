@@ -34,7 +34,13 @@ def _cost_section(results: list[ScenarioResult]) -> list[str]:
             f"{m}: ${p.input_per_mtok:g} input and ${p.output_per_mtok:g} output per million tokens "
             f"({p.source}, read {p.checked})."
         )
-    lines += ["", "| Scenario | Baseline cost | With rules cost | Change |", "|---|---|---|---|"]
+    lines += [
+        "",
+        "List prices, input plus output, no prompt caching. Net change is with-rules minus baseline.",
+        "",
+        "| Scenario | Baseline cost | With rules cost | Net change |",
+        "|---|---|---|---|",
+    ]
     base_total = munch_total = 0.0
     for r in results:
         b, m = _cost(r.baseline, r.model), _cost(r.munch, r.model)

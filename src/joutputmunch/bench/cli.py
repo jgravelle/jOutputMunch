@@ -26,8 +26,11 @@ DEFAULT_MAX_TOKENS = 4096
 
 
 def default_records_dir() -> Path:
-    """benchmarks/runs/ in the checkout (gitignored)."""
-    return Path(__file__).resolve().parents[3] / "benchmarks" / "runs"
+    """benchmarks/runs/ in the checkout (gitignored), or under the working folder when installed."""
+    root = Path(__file__).resolve().parents[3]
+    if not (root / "pyproject.toml").is_file():
+        root = Path.cwd()
+    return root / "benchmarks" / "runs"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,10 +94,14 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
         print(f"Set {KEY_ENV[args.provider]} to run against {args.provider}.", file=sys.stderr)
         return 2
 
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # Microseconds and the process id: two runs in one second must not share a file or an id.
+    run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')}-{os.getpid()}"
     records = args.records or default_records_dir() / f"{run_id}.jsonl"
     try:
         records.parent.mkdir(parents=True, exist_ok=True)
+        # Open it once now: a records file that cannot be written must stop the run before the first paid call.
+        with records.open("a", encoding="utf-8"):
+            pass
     except OSError:
         print(f"Cannot write {records}. Pass --records.", file=sys.stderr)
         return 2

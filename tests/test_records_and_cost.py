@@ -96,12 +96,58 @@ def test_an_unwritable_records_path_stops_before_any_call(tmp_path, capsys):
     assert "--records" in capsys.readouterr().err
 
 
+def test_a_records_path_that_is_a_folder_stops_before_any_call(tmp_path, capsys):
+    fake = FakeProvider()
+    rc = cli.main(["--records", str(tmp_path)], provider_factory=_factory(fake), environ={"ANTHROPIC_API_KEY": "k"})
+    assert rc == 2 and fake.calls == []
+    assert "--records" in capsys.readouterr().err
+
+
+def test_each_record_is_fsynced_before_the_next_call(tmp_path, monkeypatch):
+    from joutputmunch.bench import records as records_mod
+
+    events = []
+    real_fsync = records_mod.os.fsync
+    monkeypatch.setattr(records_mod.os, "fsync", lambda fd: (events.append("fsync"), real_fsync(fd))[1])
+
+    class Logging(FakeProvider):
+        def complete(self, system, user, *, temperature, max_tokens):
+            events.append("call")
+            return super().complete(system, user, temperature=temperature, max_tokens=max_tokens)
+
+    cli.main(["-s", "pr_review", "--records", str(tmp_path / "r.jsonl")], provider_factory=_factory(Logging()),
+             environ={"ANTHROPIC_API_KEY": "k"})
+    assert events == ["call", "fsync", "call", "fsync"]
+
+
+def test_two_runs_never_share_a_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "default_records_dir", lambda: tmp_path)
+    for _ in range(2):
+        cli.main(["-s", "bug_diagnosis"], provider_factory=_factory(FakeProvider()), environ={"ANTHROPIC_API_KEY": "k"})
+    files = sorted(tmp_path.glob("*.jsonl"))
+    assert len(files) == 2
+    assert len({read_records(f)[0]["run_id"] for f in files}) == 2
+
+
+def test_an_interrupt_mid_call_still_gets_a_row(tmp_path):
+    class Interrupted(FakeProvider):
+        def complete(self, system, user, *, temperature, max_tokens):
+            raise KeyboardInterrupt
+
+    records = tmp_path / "r.jsonl"
+    with pytest.raises(KeyboardInterrupt):
+        cli.main(["-s", "bug_diagnosis", "--records", str(records)], provider_factory=_factory(Interrupted()),
+                 environ={"ANTHROPIC_API_KEY": "k"})
+    assert [r["error"] for r in read_records(records)] == ["KeyboardInterrupt"]
+
+
 def test_the_report_prices_both_arms_and_the_net_change():
     fake = FakeProvider(model="claude-sonnet-4-6")
     config = RunConfig(temperature=1.0, max_tokens=4096)
     results = [run_scenario(s, fake, config) for s in load_scenarios().values()]
     text = render(results, config)
     assert "$3 input and $15 output per million tokens" in text
+    assert "List prices, input plus output, no prompt caching." in text
     # baseline: 30 in + 100 out; rules: 900 in + 40 out, per scenario
     base = call_cost("claude-sonnet-4-6", 30, 100)
     munch = call_cost("claude-sonnet-4-6", 900, 40)

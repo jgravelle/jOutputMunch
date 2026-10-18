@@ -31,7 +31,7 @@ def run_scenario(
             calls[arm] = provider.complete(
                 system, scenario.user, temperature=config.temperature, max_tokens=config.max_tokens
             )
-        except Exception as exc:
+        except BaseException as exc:  # a Ctrl-C mid-call may still be billed, so it gets a row too
             if recorder:
                 recorder.failed(scenario, arm, system, exc)
             raise
