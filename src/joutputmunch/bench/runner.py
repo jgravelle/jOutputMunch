@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from .models import Scenario, ScenarioResult
 from .providers import Provider
+from .records import RunRecorder
 
 
 @dataclass(frozen=True)
@@ -20,19 +21,27 @@ def run_scenario(
     provider: Provider,
     config: RunConfig,
     progress: Callable[[str], None] | None = None,
+    recorder: RunRecorder | None = None,
 ) -> ScenarioResult:
     say = progress or (lambda _msg: None)
     calls = {}
-    for arm, system in (("baseline", scenario.system_baseline), ("with rules", scenario.system_munch)):
+    for arm, system in (("baseline", scenario.system_baseline), ("rules", scenario.system_munch)):
         say(f"  [{scenario.key}] {arm} ...")
-        calls[arm] = provider.complete(
-            system, scenario.user, temperature=config.temperature, max_tokens=config.max_tokens
-        )
+        try:
+            calls[arm] = provider.complete(
+                system, scenario.user, temperature=config.temperature, max_tokens=config.max_tokens
+            )
+        except BaseException as exc:  # a Ctrl-C mid-call may still be billed, so it gets a row too
+            if recorder:
+                recorder.failed(scenario, arm, system, exc)
+            raise
+        if recorder:
+            recorder.completed(scenario, arm, system, calls[arm])
         say(f"  [{scenario.key}] {arm}: {calls[arm].output_tokens} tokens, {calls[arm].latency_s}s")
     return ScenarioResult(
         scenario=scenario,
         provider=provider.name,
         model=provider.model,
         baseline=calls["baseline"],
-        munch=calls["with rules"],
+        munch=calls["rules"],
     )

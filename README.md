@@ -140,6 +140,15 @@ token counts, latency, the settings used and the full output text.
 `--save` overwrites the published `benchmarks/results.md`; pass `--output`
 to keep it.
 
+Each call is also written to `benchmarks/runs/<run id>.jsonl` (gitignored) as
+soon as it returns, so a run that fails partway keeps the calls already paid
+for. A record holds the settings, both token counts, latency and cost, but not
+the answer's text unless you pass `--record-text`. The report prices both arms
+with input and output tokens, because the rules add input to every call. A
+model without a sourced price in `src/joutputmunch/bench/pricing.py` is
+reported as not priced. Outside a checkout, records go to `benchmarks/runs/`
+under the current folder; pass `--records` to choose.
+
 The harness is the only part of jOutputMunch with code. The rules need none.
 
 Published results: [benchmarks/results.md](benchmarks/results.md)
