@@ -169,7 +169,7 @@ tools and MCP servers. In the baseline arm that would shorten the answers and
 hide part of the reduction. The provider turns those off with Claude Code's
 flags and runs each call in an empty folder. Every call's reported input is
 then checked against its prompt's estimated size, and the two arms' overheads
-against each other. A run that fails either check writes no report. The guard
+against each other. A run that fails any check writes no report. The guard
 cannot tell whether the short user prompt arrived.
 `--dry-check` runs both arms of one scenario first, to show the overhead before
 you spend ten calls.
