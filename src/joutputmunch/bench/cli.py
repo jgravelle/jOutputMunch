@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,8 +95,8 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
         print(f"Set {KEY_ENV[args.provider]} to run against {args.provider}.", file=sys.stderr)
         return 2
 
-    # Microseconds and the process id: two runs in one second must not share a file or an id.
-    run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')}-{os.getpid()}"
+    # A random suffix: two runs must never share a file or an id, whatever the clock's resolution.
+    run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
     records = args.records or default_records_dir() / f"{run_id}.jsonl"
     try:
         records.parent.mkdir(parents=True, exist_ok=True)

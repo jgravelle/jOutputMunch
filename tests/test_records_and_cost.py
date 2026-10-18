@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from conftest import FakeProvider
+from conftest import REAL_DEFAULT_RECORDS_DIR, FakeProvider
 
 from joutputmunch.bench import cli
 from joutputmunch.bench.pricing import PRICES, call_cost
@@ -127,6 +127,33 @@ def test_two_runs_never_share_a_file(tmp_path, monkeypatch):
     files = sorted(tmp_path.glob("*.jsonl"))
     assert len(files) == 2
     assert len({read_records(f)[0]["run_id"] for f in files}) == 2
+
+
+def test_two_runs_in_the_same_clock_tick_still_get_two_ids(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 18, 12, 0, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(cli, "datetime", Frozen)
+    monkeypatch.setattr(cli, "default_records_dir", lambda: tmp_path)
+    for _ in range(2):
+        cli.main(["-s", "bug_diagnosis"], provider_factory=_factory(FakeProvider()), environ={"ANTHROPIC_API_KEY": "k"})
+    files = sorted(tmp_path.glob("*.jsonl"))
+    assert len(files) == 2 and all(f.name.startswith("20261018T120000Z-") for f in files)
+
+
+def test_records_default_to_the_checkout_and_to_the_working_folder_outside_one(tmp_path, monkeypatch, repo):
+    assert REAL_DEFAULT_RECORDS_DIR() == repo / "benchmarks" / "runs"
+    installed = tmp_path / "venv" / "Lib" / "site-packages" / "joutputmunch" / "bench" / "cli.py"
+    installed.parent.mkdir(parents=True)
+    monkeypatch.setattr(cli, "__file__", str(installed))
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    assert REAL_DEFAULT_RECORDS_DIR() == work / "benchmarks" / "runs"
 
 
 def test_an_interrupt_mid_call_still_gets_a_row(tmp_path):

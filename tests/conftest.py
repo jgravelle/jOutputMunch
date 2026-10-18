@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from joutputmunch.bench import cli as _cli
 from joutputmunch.bench.models import Completion
+
+# The real default, kept before the autouse fixture below replaces it for every test.
+REAL_DEFAULT_RECORDS_DIR = _cli.default_records_dir
 
 REPO = Path(__file__).resolve().parents[1]
 
