@@ -26,7 +26,7 @@ Apply these rules to every response. No exceptions.
 - Do not re-quote file contents from tool results. Reference by line number.
 - Return JSON tool results with no indentation. Dense format only.
 - Do not echo back parameters the user already passed.
-- Omit empty fields, null values, and derived counts from structured output.
+- Follow the output schema when there is one. Never drop a field it requires.
 ```
 
 ## Global (all projects)
@@ -37,3 +37,5 @@ Add the same block to `~/.claude/CLAUDE.md` instead.
 
 For the complete rule set, copy the contents of `rules/core.md` (and
 optionally `rules/code-assistant.md`) directly into your CLAUDE.md.
+`rules/profiles/aggressive.md` adds schema-changing rules (dropping nulls,
+counts and wrappers); use it only for output whose format you own.

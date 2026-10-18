@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "joutputmunch"
+version = "0.1.0"
+description = "Benchmark harness for the jOutputMunch output-token rules. The rules themselves are Markdown and need no install."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+anthropic = ["anthropic"]
+openai = ["openai"]
+
+[project.scripts]
+joutputmunch-bench = "joutputmunch.bench.cli:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+# An allowlist, so a stray file at the root (a .env holding a key) can never ship.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src", "/tests", "/rules", "/guides",
+    "/benchmarks/harness.py", "/benchmarks/results.md",
+    "/README.md", "/LICENSE", "/pyproject.toml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/joutputmunch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
