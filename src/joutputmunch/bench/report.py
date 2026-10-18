@@ -81,9 +81,10 @@ def _usage_section(results: list[ScenarioResult], floor: int | None) -> list[str
             f"Floor: a near-empty probe call reported **{floor:,}** tokens beyond its prompt. The guard "
             f"assumes this is Claude Code's own context and accepts up to {FLOOR_CEILING_TOKENS:,}. Its content "
             "was not measured. Instructions in it would reach both arms and could bias the reduction either "
-            "way; a brevity instruction would understate it. Per call, up to about "
+            "way; a brevity instruction would understate it. If the floor is clean, up to about "
             f"{FLOOR_CEILING_TOKENS - floor + EXCESS_LIMIT_TOKENS:,} tokens of added context could pass the "
-            "guard unseen: the floor's headroom under its ceiling plus each call's allowance beyond it."
+            "guard unseen per call: the floor's headroom under its ceiling plus each call's allowance beyond "
+            "it. Context already inside the floor is unseen as well."
         ),
         "",
         "Input each call reported beyond its prompt's estimated size (four characters a token) and the floor:",
