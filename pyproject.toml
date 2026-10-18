@@ -23,7 +23,11 @@ dev = ["pytest"]
 
 # An allowlist, so a stray file at the root (a .env holding a key) can never ship.
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/rules", "/guides", "/benchmarks", "/README.md", "/LICENSE", "/pyproject.toml"]
+include = [
+    "/src", "/tests", "/rules", "/guides",
+    "/benchmarks/harness.py", "/benchmarks/results.md",
+    "/README.md", "/LICENSE", "/pyproject.toml",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/joutputmunch"]

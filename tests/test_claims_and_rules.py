@@ -84,8 +84,18 @@ def _blocks(text):
     return blocks
 
 
-SHAPE_CHANGE = re.compile(r"\b(omit|omitting|strip|stripping|drop|dropping|remove|no)\b.*\b(nulls?|empty|empties|counts?|wrappers?)\b", re.IGNORECASE)
-CONDITION = re.compile(r"schema|contract|only when|unless|you own|opt-in|aggressive\.md", re.IGNORECASE)
+SHAPE_CHANGE = re.compile(
+    r"\b(omit|omitting|strip|stripping|drop|dropping|remove|no)\b.*"
+    r"(\b(nulls?|empty|empties|counts?|wrappers?|metadata|envelopes?|success)\b|_meta)",
+    re.IGNORECASE,
+)
+# A condition is a phrase that limits the rule, not a word that merely appears near it:
+# "to keep the schema small" names a schema and limits nothing.
+CONDITION = re.compile(
+    r"\bunless\b|\bonly (when|for)\b|\byou own\b|\bopt-in\b|aggressive\.md"
+    r"|\b(schema|contract|protocol|caller)s? (requires?|defines?|says)\b",
+    re.IGNORECASE,
+)
 
 
 def test_the_safe_set_never_changes_shape_without_a_condition(repo):

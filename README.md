@@ -96,7 +96,6 @@ An illustrative example, not a benchmark output.
 > machine can't keep up or when you need redundancy. Most production
 > systems end up doing both.
 
-
 ---
 
 ## Rule Files
