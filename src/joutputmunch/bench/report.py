@@ -155,9 +155,10 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
                 "- Claude Code ran with its own context switched off as far as its flags allow: the system "
                 "prompt replaced, no tools, no MCP servers, no user, project or local settings files "
                 "requested, no session saved to disk, and each call in an empty folder. Managed settings "
-                "still apply. Whether anything else reached the model is checked only by the guard: each "
-                "call's reported input against its prompt's estimated size, and the two arms' overheads "
-                "against each other. A run that fails either check writes no report."
+                "still apply. Whether anything else reached the model is checked only by the guard, and "
+                "only above its limits: each call's reported input against its prompt's estimated size "
+                "(over by 750, or under by 400), and the two arms' overheads against each other (-250 to "
+                "+150). Smaller additions pass unseen. A run that fails any check writes no report."
             ),
             (
                 "- Thinking was requested off. The usage block does not split thinking tokens out of output "

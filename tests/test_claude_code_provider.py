@@ -11,9 +11,11 @@ import pytest
 from joutputmunch.bench import cli
 from joutputmunch.bench.providers import KEY_ENV, make_provider
 from joutputmunch.bench.providers.claude_code import (
-    ARM_DIFFERENCE_LIMIT_TOKENS,
+    ARM_GAP_HIGH_TOKENS,
+    ARM_GAP_LOW_TOKENS,
     CONTAMINATION_MARGIN_TOKENS,
     FIXED_FLAGS,
+    UNDER_LIMIT_TOKENS,
     ClaudeCodeProvider,
     check_pair,
     child_env,
@@ -95,7 +97,8 @@ def test_every_isolating_flag_is_passed_and_the_user_prompt_goes_by_stdin():
 def test_the_real_rules_text_survives_a_real_process_boundary():
     """The defect a faked runner cannot see: the argv a process RECEIVES, with the actual rules text.
 
-    python.exe stands in for claude.exe; both parse a command line the same way.
+    python.exe is a stand-in for claude.exe, whose own argument parser is not checked here; the
+    guard's under-limit and gap checks are the backstop if the two ever differ.
     """
     rules = load_scenarios()["code_explanation"].system_munch
     assert "\\n" not in rules and "\n" in rules  # multi-line, which is what a .cmd shim breaks
@@ -123,9 +126,16 @@ def test_a_shim_with_no_exe_beside_it_is_refused(tmp_path):
         resolve_executable(str(shim))
 
 
+@pytest.mark.skipif(os.name != "nt", reason="npm's extensionless sh script is a shim only on Windows")
+def test_an_extensionless_claude_is_a_shim_on_windows(tmp_path):
+    with pytest.raises(SystemExit, match="shell shim"):
+        resolve_executable(str(tmp_path / "claude"))
+
+
 def test_an_executable_is_used_as_found_and_a_missing_one_is_refused(tmp_path):
     assert resolve_executable(str(tmp_path / "claude.exe")) == str(tmp_path / "claude.exe")
-    assert resolve_executable("/usr/local/bin/claude") == str(Path("/usr/local/bin/claude"))
+    if os.name != "nt":
+        assert resolve_executable("/usr/local/bin/claude") == str(Path("/usr/local/bin/claude"))
     with pytest.raises(SystemExit, match="not on PATH"):
         resolve_executable(None)
 
@@ -212,12 +222,20 @@ def test_check_pair_names_each_kind_of_problem():
     clean = estimate_tokens(s) + estimate_tokens(u)
     assert check_pair("k", u, s, clean, s, clean) == []
     assert check_pair("k", u, s, clean, s, clean + 1500)[0].startswith("k rules:")
-    gap = check_pair("k", u, s, clean, s, clean + ARM_DIFFERENCE_LIMIT_TOKENS + 1)
-    expected = (
-        f"k: the arms' overheads differ by +{ARM_DIFFERENCE_LIMIT_TOKENS + 1:,} tokens "
-        f"(limit {ARM_DIFFERENCE_LIMIT_TOKENS})"
-    )
-    assert gap == [expected]
+    allowed = f"(allowed {ARM_GAP_LOW_TOKENS:+,} to {ARM_GAP_HIGH_TOKENS:+,})"
+    high = check_pair("k", u, s, clean, s, clean + ARM_GAP_HIGH_TOKENS + 1)
+    assert high == [f"k: the arms' overheads differ by +{ARM_GAP_HIGH_TOKENS + 1:,} tokens {allowed}"]
+    assert check_pair("k", u, s, clean, s, clean + ARM_GAP_HIGH_TOKENS) == []
+    # The negative side is what a cut-short rules prompt looks like.
+    low = check_pair("k", u, s, clean, s, clean + ARM_GAP_LOW_TOKENS - 1)
+    assert low == [f"k: the arms' overheads differ by {ARM_GAP_LOW_TOKENS - 1:+,} tokens {allowed}"]
+    assert check_pair("k", u, s, clean, s, clean + ARM_GAP_LOW_TOKENS) == []
+    # A prompt that never arrived reports less input than the prompt itself, in either arm.
+    lost = check_pair("k", u, s, clean - UNDER_LIMIT_TOKENS - 1, s, clean - UNDER_LIMIT_TOKENS - 1)
+    assert [p for p in lost if "did not arrive" in p] == [
+        f"k baseline: {clean - UNDER_LIMIT_TOKENS - 1:,} input tokens, less than its own prompt; the prompt did not arrive",
+        f"k rules: {clean - UNDER_LIMIT_TOKENS - 1:,} input tokens, less than its own prompt; the prompt did not arrive",
+    ]
 
 
 def test_a_clean_run_writes_a_report_that_says_it_is_a_new_series(tmp_path):
@@ -239,6 +257,8 @@ def test_a_clean_run_writes_a_report_that_says_it_is_a_new_series(tmp_path):
     (FakeClaude(base_overhead=1500), "bug_diagnosis baseline"),
     (FakeClaude(base_overhead=0, rules_overhead=1500), "bug_diagnosis rules"),
     (FakeClaude(base_overhead=0, rules_overhead=400), "bug_diagnosis: the arms' overheads differ"),
+    # The shim defect: a rules prompt cut to its first line reports far less input than it should.
+    (FakeClaude(base_overhead=0, rules_overhead=-1400), "bug_diagnosis rules: "),
 ])
 def test_a_contaminated_run_writes_no_report_and_keeps_its_records(tmp_path, capsys, fake, names):
     out = tmp_path / "results.md"

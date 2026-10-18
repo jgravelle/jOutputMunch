@@ -44,10 +44,15 @@ from .base import timed
 # user's global CLAUDE.md alone is about 1,500 tokens (6,059 bytes, measured
 # 2026-10-18), so a leak of it lands well past this.
 CONTAMINATION_MARGIN_TOKENS = 750
-# The most the two arms' overheads may differ. A context both arms get equally
-# shifts both; a difference is what biases the reduction. The rules text's own
-# estimate error is about 90 tokens (tiktoken cl100k as a proxy).
-ARM_DIFFERENCE_LIMIT_TOKENS = 150
+# How far the rules arm's overhead may sit from the baseline's. A context both arms
+# get equally shifts both; a difference is what biases the reduction. The range is
+# lopsided because the estimate overshoots the rules text by about 90 tokens
+# (tiktoken cl100k as a proxy), so a clean run sits near -90.
+ARM_GAP_LOW_TOKENS = -250
+ARM_GAP_HIGH_TOKENS = 150
+# A call that reports this much LESS input than its own prompt's estimate did not
+# receive its prompt: a system prompt cut short, or a user prompt never read from stdin.
+UNDER_LIMIT_TOKENS = 400
 
 # The flags, all from `claude --help` (2.1.301). Each one is pinned in tests.
 FIXED_FLAGS = [
@@ -87,9 +92,14 @@ def check_pair(key: str, user: str, base_system: str, base_input: int, rules_sys
         extra = contamination(system, user, n)
         if extra:
             problems.append(f"{key} {arm}: {n:,} input tokens, {extra:,} over the limit")
+        if overhead(system, user, n) < -UNDER_LIMIT_TOKENS:
+            problems.append(f"{key} {arm}: {n:,} input tokens, less than its own prompt; the prompt did not arrive")
     gap = overhead(rules_system, user, rules_input) - overhead(base_system, user, base_input)
-    if abs(gap) > ARM_DIFFERENCE_LIMIT_TOKENS:
-        problems.append(f"{key}: the arms' overheads differ by {gap:+,} tokens (limit {ARM_DIFFERENCE_LIMIT_TOKENS})")
+    if not ARM_GAP_LOW_TOKENS <= gap <= ARM_GAP_HIGH_TOKENS:
+        problems.append(
+            f"{key}: the arms' overheads differ by {gap:+,} tokens "
+            f"(allowed {ARM_GAP_LOW_TOKENS:+,} to {ARM_GAP_HIGH_TOKENS:+,})"
+        )
     return problems
 
 
@@ -98,7 +108,9 @@ def resolve_executable(found: str | None) -> str:
     if not found:
         raise SystemExit("The claude CLI is not on PATH. Install Claude Code and sign in first.")
     path = Path(found)
-    if path.suffix.lower() not in _SHIMS:
+    # On Windows an extensionless `claude` is npm's sh script, not something CreateProcess can run.
+    is_shim = path.suffix.lower() in _SHIMS or (os.name == "nt" and not path.suffix)
+    if not is_shim:
         return str(path)
     exe = path.parent / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
     if exe.is_file():
