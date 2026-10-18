@@ -39,5 +39,5 @@ Rules for every response:
 - No filler: delve, tapestry, leverage, multifaceted, seamless, utilize.
 - No openers ("Great question!") or closers ("Hope this helps!").
 - One hedge per claim max. Do not restate what was just said.
-- JSON: no indentation, no echo fields, no nulls, no derived counts.
+- JSON: no indentation, no echo fields. Keep fields the schema requires.
 ```

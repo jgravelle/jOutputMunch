@@ -1,6 +1,6 @@
 # jOutputMunch - FREE!
 
-**Cut your LLM output tokens up to 76%. Average 65% across 5 benchmark scenarios. Same answers. Less cost. Paste one file.**
+**Cut your LLM output tokens. Paste one file.** In one published five-scenario run on Claude Sonnet 4.6, the rules cut output tokens from 4,520 to 1,571: a 65.2% aggregate reduction, 40.5% to 76.4% per scenario. One run per scenario, answer quality not yet measured: [the results](benchmarks/results.md) say what the run does and does not show.
 
 jOutputMunch is a set of system prompt rules that eliminate wasted output
 tokens from any LLM. No code to install. No dependencies. No API. Copy a
@@ -22,7 +22,7 @@ Every LLM produces output with the same structural waste:
 - **Echo fields**: Repeating back the question before answering it.
 - **Self-referential closers**: "I hope this helps! Let me know if you need
   anything else!"
-- **Pretty-printed JSON**: 20% of tokens are whitespace that adds zero
+- **Pretty-printed JSON**: indentation and line breaks that carry no
   information.
 - **Derived counts**: `result_count: 3` next to an array of 3 items.
 - **Narrated data**: "Here are the results of your search" followed by the
@@ -66,6 +66,8 @@ variants for [MCP tools](rules/mcp.md) and
 
 **Prompt**: "Explain the difference between horizontal and vertical scaling."
 
+An illustrative example, not a benchmark output.
+
 ### Without jOutputMunch (287 tokens)
 
 > Great question! Horizontal and vertical scaling are two fundamental
@@ -94,7 +96,7 @@ variants for [MCP tools](rules/mcp.md) and
 > machine can't keep up or when you need redundancy. Most production
 > systems end up doing both.
 
-**41% fewer tokens. Same information. Better answer.**
+**41% fewer tokens in this example.**
 
 ---
 
@@ -105,26 +107,37 @@ variants for [MCP tools](rules/mcp.md) and
 | [rules/core.md](rules/core.md) | Universal | Any LLM, any task |
 | [rules/mcp.md](rules/mcp.md) | MCP tools | Your agent calls MCP tools |
 | [rules/code-assistant.md](rules/code-assistant.md) | Coding agents | Claude Code, Cursor, Copilot, etc. |
+| [rules/profiles/aggressive.md](rules/profiles/aggressive.md) | Opt-in | You own the output format and want nulls, counts and wrappers dropped too |
 
 Use `core.md` alone for general use. Stack `mcp.md` or `code-assistant.md`
 on top for specialized workflows.
+
+`core.md` is the safe set: it never changes what a response means or the
+shape of a schema someone else defined. `profiles/aggressive.md` drops null and
+empty fields, derived counts and wrapper objects. That breaks a consumer that
+tells missing from `null` or reads a wrapper, so use it only for output whose
+format you own.
 
 ---
 
 ## Benchmarks
 
-Run the benchmark harness yourself:
+Run the benchmark harness yourself. It calls a paid API: two calls per
+scenario, ten for the full set.
 
 ```bash
-pip install anthropic openai tiktoken
+pip install -e ".[anthropic]"
 export ANTHROPIC_API_KEY=...
-export OPENAI_API_KEY=...
 python benchmarks/harness.py --save
 ```
 
-This runs each scenario twice (baseline vs. with rules) and writes a
-detailed comparison to `benchmarks/results.md` with token counts, latency,
-and full output text for review.
+The defaults reproduce the published run: `claude-sonnet-4-6`, temperature
+1.0, max 4096 output tokens. `--provider openai`, `--model` and
+`--temperature` change them. The harness runs each scenario twice (baseline
+vs. with rules) and writes `benchmarks/results.md` with output and input
+token counts, latency, the settings used and the full output text.
+
+The harness is the only part of jOutputMunch with code. The rules need none.
 
 Published results: [benchmarks/results.md](benchmarks/results.md)
 
@@ -152,7 +165,8 @@ Instead of dumping a 700k-token codebase into context, jCodemunch lets the
 model navigate by symbol — looking up only the function, class, or reference
 it actually needs. Same answer. Fraction of the tokens.
 
-**Paired together:** jOutputMunch trims the output side by up to 76%.
+**Paired together:** jOutputMunch cut output tokens 65.2% (aggregate) in its
+one published run.
 jCodemunch eliminates ~99.6% of the input side. On code-heavy workloads,
 that's the entire token budget on both ends of the conversation.
 
@@ -170,8 +184,9 @@ predictable across models.
 
 jOutputMunch rules override these defaults at the system prompt level:
 
-1. **Structure rules** strip whitespace, echo fields, derived counts,
-   and wrapper nesting from structured output.
+1. **Structure rules** strip whitespace and echo fields from structured
+   output and follow the output schema when there is one. Dropping nulls,
+   counts and wrappers is opt-in.
 2. **Boilerplate rules** eliminate attribution strings, usage hints, and
    meta-commentary that add tokens without adding information.
 3. **Prose rules** cut filler vocabulary, hedge-stacking, throat-clearing
@@ -187,28 +202,26 @@ stops padding the output.
 
 **Does this hurt answer quality?**
 
-No. In benchmarks, answers with jOutputMunch rules applied are shorter AND
-more direct. The information content is preserved or improved because the
-model spends its token budget on substance instead of filler.
+Not measured yet. The published run recorded tokens and latency, not
+answer quality. The rules are written to cut redundancy and keep required
+information, and `core.md` says so as its first rule. A benchmark that
+checks quality is planned.
 
 **Does this work with every model?**
 
-Yes. These patterns exist in every model we've tested: Claude (Haiku
-through Opus), GPT-3.5 through GPT-4o, Gemini Pro and Flash, Llama 3,
-Mistral. The specific reduction varies by model but the direction is
-consistent.
+The rules are plain text, so any model that takes a system prompt can use
+them. The published measurement covers Claude Sonnet 4.6 only. The
+harness can run the same scenarios on OpenAI models (`--provider openai`).
 
 **Can I customize the rules?**
 
-Absolutely. The rule files are plain text. Remove rules you disagree with,
+Yes. The rule files are plain text. Remove rules you disagree with,
 add your own, adjust the banned word list. Fork and make it yours.
 
 **How is this different from just saying "be concise"?**
 
-"Be concise" is one instruction. Models comply partially and
-inconsistently. jOutputMunch provides dozens of specific, testable rules
-targeting the exact patterns models default to. Specificity beats
-generality.
+"Be concise" is one instruction and leaves the model to guess what to cut.
+jOutputMunch names the specific patterns to cut, and says what must stay.
 
 ---
 

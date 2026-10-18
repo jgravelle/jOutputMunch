@@ -32,13 +32,12 @@ Use alongside core.md for maximum output token reduction.
 
 - Use `json.dumps(result, separators=(',',':'))` — no `indent`.
   Pretty-printed JSON exists for human readability. MCP results are
-  consumed by models. Dense JSON is equally parseable and 15-25%
-  smaller.
+  consumed by models. Dense JSON is equally parseable and smaller.
 
-- Strip null values and empty collections before serializing. Every
-  `"field": null` or `"items": []` is 3-5 tokens of transmitted
-  nothingness.
+- When a tool declares an output schema, the result follows it. Never
+  drop a field it requires or flatten an object it defines to save
+  tokens.
 
-- Do not include a `success: true` field on successful responses.
-  Success is the default — the absence of an error field implies it.
-  Only include `success: false` on failures.
+Stripping nulls and empty collections, and dropping `success: true`, change
+the result's shape. They are in `rules/profiles/aggressive.md`, for tools
+whose result format you own.
