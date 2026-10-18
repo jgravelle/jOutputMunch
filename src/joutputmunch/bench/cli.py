@@ -1,7 +1,7 @@
 """Command line for the benchmark harness.
 
-Every run makes two calls per scenario: a paid API call, or usage on a Claude
-plan with --provider claude-code.
+Every run makes two calls per scenario: paid API calls, or usage on a Claude plan
+with --provider claude-code, which adds one floor-probe call per run.
 """
 
 from __future__ import annotations
@@ -131,8 +131,8 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
         priced_in_dollars=getattr(provider, "priced_in_dollars", True),
     )
     floor = None
-    if not getattr(provider, "priced_in_dollars", True):
-        floor = _probe_floor(provider, config, recorder)
+    if getattr(provider, "needs_floor_probe", False):
+        floor = _probe_floor(provider, config, recorder, records)
         if floor is None:
             return 3
     if args.dry_check:
@@ -173,7 +173,7 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
     return 0
 
 
-def _probe_floor(provider, config, recorder) -> int | None:
+def _probe_floor(provider, config, recorder, records) -> int | None:
     """One near-empty call: what Claude Code adds to every call. None when it is too much to trust."""
     from .models import Scenario
     from .providers.claude_code import (
@@ -198,7 +198,9 @@ def _probe_floor(provider, config, recorder) -> int | None:
     problems = floor_problems(floor)
     if problems:
         for p in problems:
-            print(f"Refused: {p}. Something besides Claude Code's own context reached the call.", file=sys.stderr)
+            print(f"Refused: {p}. Something besides Claude Code's own context may have reached the call.",
+                  file=sys.stderr)
+        print(f"No scenario was run. The record is in {records}.", file=sys.stderr)
         return None
     return floor
 

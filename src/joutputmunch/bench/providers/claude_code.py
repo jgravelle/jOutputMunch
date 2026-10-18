@@ -49,15 +49,16 @@ FLOOR_PROBE_SYSTEM = "You are an assistant."
 FLOOR_PROBE_USER = "Reply with the single word OK."
 # A leak (the user's global CLAUDE.md is about 1,500 tokens, 6,059 bytes) reaches the
 # probe as well, and subtracting the floor would then cancel it out of every call. So
-# the floor itself has a ceiling: a clean one measured about 680.
+# the floor itself has a ceiling. No probe has run yet; the first run's smallest
+# overhead was 681, which includes the estimate's own error.
 FLOOR_CEILING_TOKENS = 1000
 # The most one call may add beyond the floor. The first run's worst was about 200, the
 # estimate under-counting a JSON prompt; a leaked CLAUDE.md is about 1,500.
 EXCESS_LIMIT_TOKENS = 400
 # How far the rules arm's overhead may sit from the baseline's. A context both arms
-# get equally shifts both; a difference is what biases the reduction. The range is
-# lopsided because the estimate overshoots the rules text by about 90 tokens
-# (tiktoken cl100k as a proxy), so a clean run sits near -90.
+# get equally shifts both; a difference is what biases the reduction. The first real
+# run's gaps were +21 to +40. The low side is wider because a rules prompt cut short
+# shows up as a large negative gap, and the under-limit check covers that too.
 ARM_GAP_LOW_TOKENS = -250
 ARM_GAP_HIGH_TOKENS = 150
 # A call that reports this much LESS input than its prompt's estimate plus the floor did
@@ -163,6 +164,8 @@ class ClaudeCodeProvider:
     name = "claude-code"
     sets_temperature = False
     priced_in_dollars = False
+    # Claude Code adds context of its own to every call, so each run measures it first.
+    needs_floor_probe = True
 
     def __init__(self, model: str, run: Callable[..., subprocess.CompletedProcess] | None = None,
                  executable: str | None = None):

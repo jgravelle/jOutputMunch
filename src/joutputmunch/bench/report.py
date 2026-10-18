@@ -63,7 +63,10 @@ CLAUDE_CODE = "claude-code"
 
 
 def _usage_section(results: list[ScenarioResult], floor: int | None) -> list[str]:
-    from .providers.claude_code import excess
+    from .providers.claude_code import EXCESS_LIMIT_TOKENS, FLOOR_CEILING_TOKENS, excess
+
+    if floor is None:
+        raise ValueError("a claude-code report needs the run's floor (the probe's overhead)")
 
     calls = [c for r in results for c in (r.baseline, r.munch)]
     lines = [
@@ -75,9 +78,12 @@ def _usage_section(results: list[ScenarioResult], floor: int | None) -> list[str
         ),
         "",
         (
-            f"Floor: Claude Code added **{floor:,}** tokens of its own context to a near-empty probe call. It "
-            "reaches both arms equally, and what it says was not measured. If it carries style instructions, "
-            "it shortens both arms and understates the reduction."
+            f"Floor: a near-empty probe call reported **{floor:,}** tokens beyond its prompt. The guard "
+            f"assumes this is Claude Code's own context and accepts up to {FLOOR_CEILING_TOKENS:,}. Its content "
+            "was not measured. Instructions in it would reach both arms and could bias the reduction either "
+            "way; a brevity instruction would understate it. Per call, up to about "
+            f"{FLOOR_CEILING_TOKENS - floor + EXCESS_LIMIT_TOKENS:,} tokens of added context could pass the "
+            "guard unseen: the floor's headroom under its ceiling plus each call's allowance beyond it."
         ),
         "",
         "Input each call reported beyond its prompt's estimated size (four characters a token) and the floor:",

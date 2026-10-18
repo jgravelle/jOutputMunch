@@ -205,7 +205,23 @@ def test_usage_counts_cache_tokens_as_input_and_ignores_the_dollar_figure():
 def test_a_failing_cli_raises_and_is_recorded_by_type(fake, tmp_path):
     with pytest.raises(RuntimeError):
         _run(["-s", "bug_diagnosis"], fake, tmp_path)
-    assert [r["error"] for r in read_records(tmp_path / "r.jsonl")] == ["RuntimeError"]
+    rows = read_records(tmp_path / "r.jsonl")
+    assert [(r["arm"], r["error"]) for r in rows] == [("probe", "RuntimeError")]
+
+
+def test_a_scenario_call_that_fails_after_a_good_probe_is_recorded(tmp_path):
+    class FailsAfterProbe(FakeClaude):
+        def __call__(self, argv, **kw):
+            if self.calls:
+                self.calls.append({"argv": argv})
+                return subprocess.CompletedProcess(argv, 1, stdout="", stderr="")
+            return super().__call__(argv, **kw)
+
+    with pytest.raises(RuntimeError):
+        _run(["-s", "bug_diagnosis"], FailsAfterProbe(base_overhead=700), tmp_path)
+    rows = read_records(tmp_path / "r.jsonl")
+    assert [r["arm"] for r in rows] == ["probe", "baseline"]
+    assert "error" not in rows[0] and rows[1]["error"] == "RuntimeError"
 
 
 def test_a_timeout_does_not_repeat_the_argv():
@@ -278,7 +294,10 @@ def test_a_clean_run_writes_a_report_that_says_it_is_a_new_series(tmp_path):
     assert all(x in " ".join(report.split()) for x in limits)
     assert "not checked" in report
     assert "Subscription usage, not priced in dollars" in report
-    assert "Floor: Claude Code added **700** tokens" in report
+    flat = " ".join(report.split())
+    assert "Floor: a near-empty probe call reported **700** tokens beyond its prompt." in flat
+    assert f"up to about {FLOOR_CEILING_TOKENS - 700 + EXCESS_LIMIT_TOKENS:,} tokens of added context could pass" in flat
+    assert "could bias the reduction either way" in flat
     assert "| General question | 0 | 0 |" in report
     assert "$" not in report.split("## Usage")[1].split("## Methodology")[0]
     rows = read_records(tmp_path / "r.jsonl")
@@ -318,6 +337,26 @@ def test_the_dry_check_runs_the_probe_and_both_arms_of_one_scenario(tmp_path, ca
     assert [r["arm"] for r in read_records(tmp_path / "r.jsonl")] == ["probe", "baseline", "rules"]
 
 
+def test_a_refused_probe_stops_the_dry_check_too(tmp_path, capsys):
+    fake = FakeClaude(base_overhead=2200)
+    assert _run(["--dry-check"], fake, tmp_path) == 3
+    assert len(fake.calls) == 1
+    err = capsys.readouterr().err
+    assert "floor probe" in err and "No scenario was run" in err
+
+
+def test_a_claude_code_report_cannot_be_rendered_without_a_floor(tmp_path):
+    from joutputmunch.bench.report import render
+    from joutputmunch.bench.runner import RunConfig, run_scenario
+
+    config = RunConfig(temperature=1.0, max_tokens=10)
+    provider = ClaudeCodeProvider("m", run=FakeClaude(base_overhead=700), executable="claude")
+    results = [run_scenario(load_scenarios()["bug_diagnosis"], provider, config)]
+    with pytest.raises(ValueError, match="floor"):
+        render(results, config)
+    assert "**700**" in render(results, config, floor=700)
+
+
 def test_a_leaked_context_in_the_probe_refuses_before_any_scenario_call(tmp_path, capsys):
     fake = FakeClaude(base_overhead=2200)  # the probe carries it too: a CLAUDE.md in every call
     assert _run(["--save", "--output", str(tmp_path / "results.md")], fake, tmp_path) == 3
@@ -330,10 +369,12 @@ def test_the_dry_check_is_only_for_claude_code(capsys):
     assert "claude-code" in capsys.readouterr().err
 
 
-def test_the_first_real_run_passes_the_calibrated_guard():
-    """Replays the input tokens the refused 2026-10-18 run reported (records 20261018T171926Z-6df85047).
+@pytest.mark.parametrize("floor", [650, 681, 700, 720])
+def test_the_first_real_run_passes_the_calibrated_guard(floor):
+    """Replays the input tokens the refused 2026-10-18 run reported (records 20261018T171926Z-6df85047,
+    and the dry check's 20261018T171837Z-cc8b3a5e for code_explanation's second row).
 
-    The probe did not exist then, so the floor here is an assumption: the run's smallest overhead (681).
+    The probe did not exist then, so the floor is an assumption, swept over 650-720.
     """
     reported = {  # scenario: (baseline input, rules input)
         "code_explanation": (820, 2336),
@@ -345,4 +386,6 @@ def test_the_first_real_run_passes_the_calibrated_guard():
     scenarios = load_scenarios()
     for key, (base, rules) in reported.items():
         s = scenarios[key]
-        assert check_pair(key, s.user, s.system_baseline, base, s.system_munch, rules, 681) == [], key
+        assert check_pair(key, s.user, s.system_baseline, base, s.system_munch, rules, floor) == [], key
+    s = scenarios["code_explanation"]
+    assert check_pair("dry", s.user, s.system_baseline, 823, s.system_munch, 2328, floor) == []

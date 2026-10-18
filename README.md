@@ -122,7 +122,7 @@ format you own.
 
 Run the benchmark harness yourself. It makes two calls per scenario, ten for the
 full set: paid API calls, or usage on your Claude plan with `--provider
-claude-code` (below).
+claude-code` (below), which adds one floor-probe call per run.
 
 ```bash
 pip install -e ".[anthropic]"
