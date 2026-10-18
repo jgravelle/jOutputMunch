@@ -63,15 +63,29 @@ CLAUDE_CODE = "claude-code"
 
 
 def _usage_section(results: list[ScenarioResult]) -> list[str]:
+    from .providers.claude_code import overhead
+
     calls = [c for r in results for c in (r.baseline, r.munch)]
-    return [
+    lines = [
         "## Usage",
         "",
         (
             f"Subscription usage, not priced in dollars: {sum(c.input_tokens for c in calls):,} input and "
             f"{sum(c.output_tokens for c in calls):,} output tokens over {len(calls)} calls."
         ),
+        "",
+        "Input each call reported beyond its prompt's estimated size (four characters a token):",
+        "",
+        "| Scenario | Baseline overhead | With rules overhead |",
+        "|---|---|---|",
     ]
+    for r in results:
+        s = r.scenario
+        lines.append(
+            f"| {s.label} | {overhead(s.system_baseline, s.user, r.baseline.input_tokens):,} "
+            f"| {overhead(s.system_munch, s.user, r.munch.input_tokens):,} |"
+        )
+    return lines
 
 
 def render(results: list[ScenarioResult], config: RunConfig) -> str:
@@ -85,14 +99,18 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
     if via_claude_code:
         lines += [
             (
-                "**A new series. Not comparable with the published API run (65.2%).** These calls ran "
+                "**A new series. Not comparable with the published API run.** These calls ran "
                 "through Claude Code (`claude -p`) on a subscription login, a different path to the model "
                 "from the API calls that produced the published figures."
             ),
             "",
         ]
     lines += [
-        "Same prompt, same model, same temperature. Only difference: jOutputMunch rules in the system prompt.",
+        (
+            "Same prompt, same model. Only difference: jOutputMunch rules in the system prompt."
+            if via_claude_code
+            else "Same prompt, same model, same temperature. Only difference: jOutputMunch rules in the system prompt."
+        ),
         "",
         (
             f"Model: **{', '.join(models)}**. "
@@ -135,10 +153,11 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
             "",
             (
                 "- Claude Code ran with its own context switched off as far as its flags allow: the system "
-                "prompt replaced, no tools, no MCP servers, no user, project or local settings files, no "
-                "per-machine prompt sections, no session saved, and each call in an empty folder. Managed "
-                "settings still apply. Every call's reported input was checked against its prompt's "
-                "estimated size; a run with any call over the limit writes no report."
+                "prompt replaced, no tools, no MCP servers, no user, project or local settings files "
+                "requested, no session saved to disk, and each call in an empty folder. Managed settings "
+                "still apply. Whether anything else reached the model is checked only by the guard: each "
+                "call's reported input against its prompt's estimated size, and the two arms' overheads "
+                "against each other. A run that fails either check writes no report."
             ),
             (
                 "- Thinking was requested off. The usage block does not split thinking tokens out of output "

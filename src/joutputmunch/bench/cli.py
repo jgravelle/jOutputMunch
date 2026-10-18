@@ -1,6 +1,7 @@
 """Command line for the benchmark harness.
 
-Every run calls a paid API: two calls per scenario.
+Every run makes two calls per scenario: a paid API call, or usage on a Claude
+plan with --provider claude-code.
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dry-check",
         action="store_true",
-        help="claude-code only: make ONE baseline call and report its input tokens against the prompt estimate",
+        help="claude-code only: run both arms of ONE scenario (2 calls) and check what Claude Code added",
     )
     return p
 
@@ -167,46 +168,32 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
     return 0
 
 
-
 def _contaminated(results) -> list[str]:
-    from .providers.claude_code import contamination
+    from .providers.claude_code import check_pair
 
     out = []
     for r in results:
-        for arm, system, c in (
-            ("baseline", r.scenario.system_baseline, r.baseline),
-            ("rules", r.scenario.system_munch, r.munch),
-        ):
-            extra = contamination(system, r.scenario.user, c.input_tokens)
-            if extra:
-                out.append(f"{r.scenario.key} {arm}: {c.input_tokens:,} input tokens, {extra:,} over the limit")
+        s = r.scenario
+        out += check_pair(s.key, s.user, s.system_baseline, r.baseline.input_tokens, s.system_munch, r.munch.input_tokens)
     return out
 
 
 def _dry_check(scenario, provider, config, recorder, records) -> int:
-    """One baseline call: does Claude Code add context the prompt did not carry?"""
-    from .providers.claude_code import (
-        CONTAMINATION_MARGIN_TOKENS,
-        contamination,
-        estimate_tokens,
-    )
+    """Both arms of one scenario: does Claude Code add context, and the same amount to each arm?"""
+    from .providers.claude_code import CONTAMINATION_MARGIN_TOKENS, check_pair, overhead
 
-    print(f"Dry check: one baseline call ({scenario.key}) on {provider.name}/{provider.model}")
-    try:
-        c = provider.complete(scenario.system_baseline, scenario.user, temperature=config.temperature,
-                              max_tokens=config.max_tokens)
-    except BaseException as exc:
-        recorder.failed(scenario, "baseline", scenario.system_baseline, exc)
-        raise
-    recorder.completed(scenario, "baseline", scenario.system_baseline, c)
-    estimate = estimate_tokens(scenario.system_baseline) + estimate_tokens(scenario.user)
-    extra = contamination(scenario.system_baseline, scenario.user, c.input_tokens)
-    print(f"  reported input: {c.input_tokens:,} tokens")
-    print(f"  prompt estimate: {estimate:,} tokens (limit: estimate + {CONTAMINATION_MARGIN_TOKENS})")
-    print(f"  overhead: {c.input_tokens - estimate:,} tokens")
+    print(f"Dry check: both arms of one scenario ({scenario.key}), 2 calls, on {provider.name}/{provider.model}")
+    r = run_scenario(scenario, provider, config, progress=print, recorder=recorder)
+    for arm, system, c in (("baseline", scenario.system_baseline, r.baseline), ("rules", scenario.system_munch, r.munch)):
+        print(f"  {arm}: reported input {c.input_tokens:,} tokens, overhead {overhead(system, scenario.user, c.input_tokens):,}")
+    print(f"  limit: overhead under {CONTAMINATION_MARGIN_TOKENS} per call, and the arms within the gap limit")
     print(f"  records: {records}")
-    if extra:
-        print(f"  REFUSE: {extra:,} tokens over the limit. A full run would be refused.")
+    problems = check_pair(scenario.key, scenario.user, scenario.system_baseline, r.baseline.input_tokens,
+                          scenario.system_munch, r.munch.input_tokens)
+    if problems:
+        for p in problems:
+            print(f"  REFUSE: {p}")
+        print("  A full run would be refused.")
         return 3
     print("  CLEAN: a full run would pass the guard.")
     return 0
