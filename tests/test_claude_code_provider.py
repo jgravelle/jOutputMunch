@@ -233,8 +233,8 @@ def test_check_pair_names_each_kind_of_problem():
     # A prompt that never arrived reports less input than the prompt itself, in either arm.
     lost = check_pair("k", u, s, clean - UNDER_LIMIT_TOKENS - 1, s, clean - UNDER_LIMIT_TOKENS - 1)
     assert [p for p in lost if "did not arrive" in p] == [
-        f"k baseline: {clean - UNDER_LIMIT_TOKENS - 1:,} input tokens, less than its own prompt; the prompt did not arrive",
-        f"k rules: {clean - UNDER_LIMIT_TOKENS - 1:,} input tokens, less than its own prompt; the prompt did not arrive",
+        f"k baseline: {clean - UNDER_LIMIT_TOKENS - 1:,} input tokens, less than its own prompt; the prompt did not arrive in full",
+        f"k rules: {clean - UNDER_LIMIT_TOKENS - 1:,} input tokens, less than its own prompt; the prompt did not arrive in full",
     ]
 
 
@@ -246,6 +246,9 @@ def test_a_clean_run_writes_a_report_that_says_it_is_a_new_series(tmp_path):
     assert report.split("\n", 3)[2].startswith("**A new series. Not comparable with the published API run.**")
     assert "Same prompt, same model. Only difference" in report and "same temperature" not in report
     assert "Temperature: **not set**" in report
+    limits = (f"(over by {CONTAMINATION_MARGIN_TOKENS}, or under by {UNDER_LIMIT_TOKENS})", f"({ARM_GAP_LOW_TOKENS:+} to {ARM_GAP_HIGH_TOKENS:+})")
+    assert all(x in " ".join(report.split()) for x in limits)
+    assert "not checked" in report
     assert "Subscription usage, not priced in dollars" in report
     assert "| General question | 700 | 700 |" in report
     assert "$" not in report.split("## Usage")[1].split("## Methodology")[0]

@@ -195,7 +195,7 @@ def _dry_check(scenario, provider, config, recorder, records) -> int:
             print(f"  REFUSE: {p}")
         print("  A full run would be refused.")
         return 3
-    print("  CLEAN: both prompts arrived (the user prompt by stdin), and a full run would pass the guard.")
+    print("  CLEAN: a full run would pass the guard.")
     return 0
 
 

@@ -51,7 +51,8 @@ CONTAMINATION_MARGIN_TOKENS = 750
 ARM_GAP_LOW_TOKENS = -250
 ARM_GAP_HIGH_TOKENS = 150
 # A call that reports this much LESS input than its own prompt's estimate did not
-# receive its prompt: a system prompt cut short, or a user prompt never read from stdin.
+# receive its system prompt in full (a prompt cut short). A missing user prompt is too
+# small to see this way, and both arms would lose it equally, so the guard cannot check it.
 UNDER_LIMIT_TOKENS = 400
 
 # The flags, all from `claude --help` (2.1.301). Each one is pinned in tests.
@@ -93,7 +94,7 @@ def check_pair(key: str, user: str, base_system: str, base_input: int, rules_sys
         if extra:
             problems.append(f"{key} {arm}: {n:,} input tokens, {extra:,} over the limit")
         if overhead(system, user, n) < -UNDER_LIMIT_TOKENS:
-            problems.append(f"{key} {arm}: {n:,} input tokens, less than its own prompt; the prompt did not arrive")
+            problems.append(f"{key} {arm}: {n:,} input tokens, less than its own prompt; the prompt did not arrive in full")
     gap = overhead(rules_system, user, rules_input) - overhead(base_system, user, base_input)
     if not ARM_GAP_LOW_TOKENS <= gap <= ARM_GAP_HIGH_TOKENS:
         problems.append(

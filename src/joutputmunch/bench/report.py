@@ -149,6 +149,8 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
         lines.append(f"| {r.scenario.label} | {r.baseline.input_tokens:,} | {r.munch.input_tokens:,} |")
     lines += ["", *(_usage_section(results) if via_claude_code else _cost_section(results)), "", "## Methodology"]
     if via_claude_code:
+        from .providers import claude_code as cc
+
         lines += [
             "",
             (
@@ -157,8 +159,10 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
                 "requested, no session saved to disk, and each call in an empty folder. Managed settings "
                 "still apply. Whether anything else reached the model is checked only by the guard, and "
                 "only above its limits: each call's reported input against its prompt's estimated size "
-                "(over by 750, or under by 400), and the two arms' overheads against each other (-250 to "
-                "+150). Smaller additions pass unseen. A run that fails any check writes no report."
+                f"(over by {cc.CONTAMINATION_MARGIN_TOKENS}, or under by {cc.UNDER_LIMIT_TOKENS}), and the "
+                f"two arms' overheads against each other ({cc.ARM_GAP_LOW_TOKENS:+} to "
+                f"{cc.ARM_GAP_HIGH_TOKENS:+}). Smaller additions pass unseen, and whether the user prompt "
+                "arrived by stdin is not checked. A run that fails any check writes no report."
             ),
             (
                 "- Thinking was requested off. The usage block does not split thinking tokens out of output "
