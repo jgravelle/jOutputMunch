@@ -8,10 +8,13 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .models import signed_change, summarize
+from .pricing import call_cost
 from .providers import DEFAULT_MODELS, KEY_ENV, make_provider
+from .records import RunRecorder
 from .report import render
 from .runner import RunConfig, run_scenario
 from .scenarios import RULE_SETS, default_rules_dir, load_scenarios
@@ -20,6 +23,11 @@ from .scenarios import RULE_SETS, default_rules_dir, load_scenarios
 # published results set no temperature, so it relied on this; it is explicit now.
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_TOKENS = 4096
+
+
+def default_records_dir() -> Path:
+    """benchmarks/runs/ in the checkout (gitignored)."""
+    return Path(__file__).resolve().parents[3] / "benchmarks" / "runs"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,6 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(__file__).resolve().parents[3] / "benchmarks" / "results.md",
         help="report path for --save (default: benchmarks/results.md)",
     )
+    p.add_argument(
+        "--records",
+        type=Path,
+        default=None,
+        help="JSONL file that gets one line per call, written as each call ends "
+        "(default: benchmarks/runs/<run id>.jsonl, gitignored)",
+    )
+    p.add_argument("--record-text", action="store_true", help="also keep each answer's text in the records")
     return p
 
 
@@ -75,16 +91,39 @@ def main(argv: list[str] | None = None, *, provider_factory=make_provider, envir
         print(f"Set {KEY_ENV[args.provider]} to run against {args.provider}.", file=sys.stderr)
         return 2
 
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    records = args.records or default_records_dir() / f"{run_id}.jsonl"
+    try:
+        records.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        print(f"Cannot write {records}. Pass --records.", file=sys.stderr)
+        return 2
+
     provider = provider_factory(args.provider, args.model)
     config = RunConfig(temperature=args.temperature, max_tokens=args.max_tokens)
-    print(f"Running {len(scenarios)} scenario(s) on {provider.name}/{provider.model}, temperature {config.temperature}\n")
-    results = [run_scenario(s, provider, config, progress=print) for s in scenarios.values()]
+    recorder = RunRecorder(
+        records,
+        run_id=run_id,
+        provider=provider.name,
+        model=provider.model,
+        temperature=config.temperature,
+        max_tokens=config.max_tokens,
+        record_text=args.record_text,
+    )
+    print(f"Running {len(scenarios)} scenario(s) on {provider.name}/{provider.model}, temperature {config.temperature}")
+    print(f"Records: {records}\n")
+    results = [run_scenario(s, provider, config, progress=print, recorder=recorder) for s in scenarios.values()]
 
     summary = summarize(results)
     print("\n--- Summary ---")
     for r in results:
         print(f"  {r.scenario.label:25s} {r.baseline.output_tokens:>5} -> {r.munch.output_tokens:>5} ({signed_change(r.reduction_pct)})")
     print(f"  aggregate {signed_change(summary.aggregate_pct)}, unweighted mean {signed_change(summary.mean_pct)}")
+    costs = [call_cost(provider.model, c.input_tokens, c.output_tokens) for r in results for c in (r.baseline, r.munch)]
+    if None in costs:
+        print(f"  cost: not priced ({provider.model} has no sourced price in pricing.py)")
+    else:
+        print(f"  cost: ${sum(costs):.4f} for {len(costs)} calls")
 
     if args.save:
         args.output.write_text(render(results, config), encoding="utf-8")

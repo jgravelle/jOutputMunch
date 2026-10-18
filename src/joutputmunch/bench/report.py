@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .models import ScenarioResult, signed_change, summarize
+from .pricing import PRICES, call_cost
 from .runner import RunConfig
 
 
@@ -14,6 +15,42 @@ def _fenced(text: str) -> list[str]:
         longest = max(longest, run)
     fence = "`" * max(3, longest + 1)
     return [fence, text, fence]
+
+
+def _cost(c, model: str) -> float | None:
+    return call_cost(model, c.input_tokens, c.output_tokens)
+
+
+def _cost_section(results: list[ScenarioResult]) -> list[str]:
+    """Input plus output cost per arm. The rules cost input on every call, so this is the net figure."""
+    lines = ["## Cost", ""]
+    models = sorted({r.model for r in results})
+    unpriced = [m for m in models if m not in PRICES]
+    if unpriced:
+        return lines + [f"Not priced: {', '.join(unpriced)} has no sourced price in `pricing.py`."]
+    for m in models:
+        p = PRICES[m]
+        lines.append(
+            f"{m}: ${p.input_per_mtok:g} input and ${p.output_per_mtok:g} output per million tokens "
+            f"({p.source}, read {p.checked})."
+        )
+    lines += ["", "| Scenario | Baseline cost | With rules cost | Change |", "|---|---|---|---|"]
+    base_total = munch_total = 0.0
+    for r in results:
+        b, m = _cost(r.baseline, r.model), _cost(r.munch, r.model)
+        base_total += b
+        munch_total += m
+        lines.append(f"| {r.scenario.label} | ${b:.4f} | ${m:.4f} | {_signed_usd(m - b)} |")
+    lines.append(
+        f"| **Total** | **${base_total:.4f}** | **${munch_total:.4f}** | **{_signed_usd(munch_total - base_total)}** |"
+    )
+    return lines
+
+
+def _signed_usd(delta: float) -> str:
+    if round(delta, 4) == 0:
+        return "$0.0000"
+    return f"{'+' if delta > 0 else '-'}${abs(delta):.4f}"
 
 
 def render(results: list[ScenarioResult], config: RunConfig) -> str:
@@ -54,9 +91,8 @@ def render(results: list[ScenarioResult], config: RunConfig) -> str:
     ]
     for r in results:
         lines.append(f"| {r.scenario.label} | {r.baseline.input_tokens:,} | {r.munch.input_tokens:,} |")
+    lines += ["", *_cost_section(results), "", "## Methodology"]
     lines += [
-        "",
-        "## Methodology",
         "",
         "- Token counts are the provider's native usage figures.",
         (

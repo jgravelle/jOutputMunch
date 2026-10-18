@@ -29,6 +29,14 @@ class FakeProvider:
         )
 
 
+@pytest.fixture(autouse=True)
+def _records_stay_out_of_the_repo(tmp_path, monkeypatch):
+    """No test may write run records into the checkout."""
+    from joutputmunch.bench import cli
+
+    monkeypatch.setattr(cli, "default_records_dir", lambda: tmp_path / "runs")
+
+
 @pytest.fixture
 def fake_provider():
     return FakeProvider()
